@@ -1,0 +1,4 @@
+shots/
+build/
+*.idsig
+__pycache__/
