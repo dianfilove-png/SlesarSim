@@ -6,7 +6,7 @@ G.UI = (() => {
   const A = () => G.Act;
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  let cur = null, resume = false, lastScene = null, lastActKey = '', hudAcc = 1, orderDraft = {};
+  let cur = null, resume = false, lastScene = null, lastActKey = '', hudAcc = 1, liveAcc = 0, lastTouch = 0, orderDraft = {};
   const api = { dirty: true };
 
   // ---------- конструкторы
@@ -34,8 +34,9 @@ G.UI = (() => {
   const dur = (m) => U.dur(A().dur(m));
 
   // ---------- панель
-  function panel(title, build) {
-    cur = { title, build };
+  // live: панель оборудования — игра идёт, значения обновляются; иначе пауза
+  function panel(title, build, live) {
+    cur = { title, build, live: !!live };
     resume = false;
     render();
     $('panel').classList.remove('hidden');
@@ -62,7 +63,7 @@ G.UI = (() => {
   function hidePanelForBusy() { closePanel(true); }
   const panelOpen = () => !$('panel').classList.contains('hidden');
   const overlayOpen = () => !$('overlay').classList.contains('hidden');
-  const isModal = () => panelOpen() || overlayOpen() || G.MG.isOpen();
+  const isModal = () => overlayOpen() || G.MG.isOpen() || (panelOpen() && !(cur && cur.live));
 
   // ---------- тосты
   function toast(text, cls, html, ms) {
@@ -167,6 +168,11 @@ G.UI = (() => {
   function tick(dt) {
     hudAcc += dt;
     if (hudAcc > 0.2) { hudAcc = 0; hud(); }
+    liveAcc += dt;
+    if (liveAcc > 0.8) {
+      liveAcc = 0;
+      if (cur && cur.live && panelOpen() && !G.busy && performance.now() - lastTouch > 1500) render();
+    }
   }
   function ring() { $('b-phone').classList.add('ring'); }
 
@@ -186,6 +192,11 @@ G.UI = (() => {
       if (s.p.tools.pyrometer && p.on) { const tb = 35 + p.bear * 0.35 + (p.lube < 25 ? 18 : 0); kv(b, 'Пирометр: подшипник', Math.round(tb) + '°C', tb > 70 ? 'bad' : tb > 55 ? 'warn' : 'ok'); }
       kv(b, 'Смазка подшипников', p.lube > 60 ? 'свежая' : p.lube > 25 ? 'нормально' : 'сухо — смазать!', p.lube > 60 ? 'ok' : p.lube > 25 ? '' : 'bad');
       kv(b, 'Уплотнение вала', p.seal >= 100 ? 'течёт струёй!' : p.seal >= 75 ? 'подкапывает' : 'сухо', p.seal >= 100 ? 'bad' : p.seal >= 75 ? 'warn' : 'ok');
+      const pre = checklist(p.circ).filter((x) => !x.ok && !x.pump);
+      if (!p.on && pre.length) {
+        sect(b, 'Перед пуском ' + (p.circ === 'heat' ? 'отопления' : 'ГВС'));
+        pre.forEach((x) => kv(b, (x.wait ? '… ' : '✘ ') + x.t, x.how, x.wait ? 'warn' : 'bad'));
+      }
       sect(b, 'Действия');
       if (p.on) btn(b, 'Остановить насос', () => A().pumpStop(i), { sub: '1 мин' });
       else btn(b, 'Запустить насос', () => A().pumpStart(i), { cls: p.broken ? 'warn' : 'main', sub: p.broken ? 'Сначала ремонт' : s[p.circ].ps < 1 ? 'Внимание: давления нет — сухой ход!' : '1 мин' });
@@ -195,7 +206,7 @@ G.UI = (() => {
       const rs = (p.on ? ['остановить насос'] : []).concat(A().needItems([['seal', 1]]));
       btn(b, 'Заменить торцевое уплотнение', () => A().pumpSeal(i), { cls: rs.length ? 'warn' : '', sub: reqSub(rs, 'Торцевое уплотнение · около ' + dur(72)) });
       para(b, 'Совет: перед ремонтом запусти соседний насос, тогда контур не встанет.', true);
-    });
+    }, true);
   }
   function panelValve(i) {
     const s = G.S;
@@ -223,8 +234,10 @@ G.UI = (() => {
       }
       const rr = iso.concat(A().needItems([['valve', 1], ['gasket', 2]]));
       btn(b, 'Заменить задвижку', () => A().valveReplace(i), { cls: rr.length ? 'warn' : 'main', sub: reqSub(rr, 'Задвижка + прокладка ×2 · мини-игра «болты»') });
-      para(b, 'Чтобы снять задвижку: насосы контура стоп → закрыть вторую задвижку на этой трубе → открыть дренаж и дождаться 0 бар. После — открыть задвижки, закрыть дренаж, поднять давление (для отопления — подпиткой) и запустить насос.', true);
-    });
+      para(b, c === 'heat'
+        ? 'Чтобы снять задвижку: насосы отопления стоп → закрыть вторую задвижку на этой трубе → открыть «Дренаж отопл.» и дождаться 0 бар. После — открыть задвижки, закрыть дренаж, подпиткой поднять до ~4 бар и запустить насос (чек-лист — в шкафу).'
+        : 'Чтобы снять задвижку: насосы ГВС стоп → закрыть вторую задвижку на этой трубе → открыть «Дренаж ГВС» (внизу справа) и дождаться 0 бар. Отопление не трогать! После — открыть задвижки, закрыть дренаж (ГВС наполнится сам) и запустить насос.', true);
+    }, true);
   }
   function panelHX(c) {
     const s = G.S;
@@ -258,7 +271,7 @@ G.UI = (() => {
         b.appendChild(row);
         para(b, 'По СанПиН горячая вода у потребителя — не ниже 60°C и не выше 75°C.', true);
       }
-    });
+    }, true);
   }
   function panelFilter() {
     const s = G.S;
@@ -270,7 +283,7 @@ G.UI = (() => {
       sect(b, 'Действия');
       const r = A().dryReasons('heat').concat(A().needItems([['gasket', 1]]));
       btn(b, 'Почистить грязевик', () => A().cleanFilter(), { cls: r.length ? 'warn' : 'main', sub: reqSub(r, 'Прокладка ×1 · около ' + dur(40)) });
-    });
+    }, true);
   }
   function panelDrain(c) {
     const s = G.S;
@@ -282,7 +295,7 @@ G.UI = (() => {
       btn(b, C.drain ? 'Закрыть дренаж' : 'Открыть дренаж', () => A().drain(c), { cls: 'main', sub: dur(2) });
       if (c === 'gvs') para(b, 'ГВС после закрытия дренажа наполнится сам — от водопровода.', true);
       else para(b, 'Отопление после ремонта нужно заполнить подпиткой до ~4 бар.', true);
-    });
+    }, true);
   }
   function panelFeed() {
     const s = G.S;
@@ -291,10 +304,13 @@ G.UI = (() => {
       para(b, 'Кран с холодного водопровода в обратку Т2. Восполняет утечки. Держи статику 3.5–4.5 бар. Выше 6.5 — сорвёт прокладки!', true);
       kv(b, 'Давление (статика)', H.ps.toFixed(2) + ' бар', H.ps > 6 || H.ps < 2 ? 'bad' : H.ps < 3.3 ? 'warn' : 'ok');
       kv(b, 'Кран подпитки', H.feed ? 'ОТКРЫТ' : 'закрыт', H.feed ? 'warn' : '');
+      if (H.feed && H.ps < 4) kv(b, 'До 4 бар', H.drain ? 'никогда — открыт дренаж!' : '≈ ' + U.dur((4 - H.ps) / 0.06), H.drain ? 'bad' : 'warn');
+      if (H.feed && H.ps >= 4) kv(b, 'Давление набрано', 'закрой подпитку!', 'bad');
       if (H.auto) kv(b, 'Регулятор РД-3М', H.autoOn ? 'подпитывает' : 'держит 3.8–4.2 бар', 'ok');
       btn(b, H.feed ? 'Закрыть подпитку' : 'Открыть подпитку', () => A().feed(), { cls: 'main', sub: dur(1) + ' · около +0.06 бар/мин' });
       if (!H.auto) btn(b, 'Установить регулятор подпитки', () => A().installReg(), { cls: inv('regulator') ? '' : 'warn', sub: inv('regulator') ? 'около ' + dur(75) : 'Нужен регулятор РД-3М (склад, с 4-го разряда)' });
-    });
+      para(b, 'Пока панель открыта, время идёт — манометр растёт на глазах.', true);
+    }, true);
   }
   function panelGauge(pipe) {
     const s = G.S;
@@ -312,12 +328,16 @@ G.UI = (() => {
       para(b, pipe === 1 ? 'Горячая вода в батареи квартала. Её температура зависит от погоды (график).' :
         pipe === 2 ? 'Остывшая вода из батарей возвращается на ЦТП, через грязевик и насосы — в теплообменник.' :
         pipe === 3 ? 'Горячая вода в краны жильцов, должна быть 60–75°C.' : 'Циркуляция: вода из стояков возвращается, чтобы в кранах не остывала. Без неё на дальних домах вода еле тёплая.', true);
-    });
+    }, true);
   }
   function panelCabinet() {
     const s = G.S;
     panel('Шкаф управления ЩУ', (b) => {
       kv(b, 'Электропитание', s.ev.power ? 'НЕТ НАПРЯЖЕНИЯ' : 'есть', s.ev.power ? 'bad' : 'ok');
+      sect(b, 'Пуск отопления — по порядку');
+      drawChecklist(b, 'heat');
+      sect(b, 'Пуск ГВС — по порядку');
+      drawChecklist(b, 'gvs');
       sect(b, 'Насосы');
       s.pumps.forEach((p, i) => {
         const st = p.broken ? 'АВАРИЯ' : p.on ? 'работает' : 'стоит';
@@ -336,7 +356,40 @@ G.UI = (() => {
       const r2 = h('div', 'row2');
       btn(r2, '−1°', () => A().gvsSet(-1)); btn(r2, '+1°', () => A().gvsSet(1));
       b.appendChild(r2);
+    }, true);
+  }
+
+  // ---------- чек-лист пуска контура (что мешает воде пойти)
+  function checklist(c) {
+    const s = G.S, C = s[c];
+    const pumps = s.pumps.filter((p) => p.circ === c);
+    const vs = (pipe) => s.valves.filter((v) => v.pipe === pipe);
+    const closed = (pipe) => vs(pipe).filter((v) => !v.open);
+    const L = [];
+    L.push({ t: 'Напряжение на ЦТП', ok: !s.ev.power, how: 'ждать, пока дадут свет' });
+    L.push({ t: 'Дренаж ' + A().circName(c) + ' закрыт', ok: !C.drain, how: 'закрыть вентиль «Дренаж ' + (c === 'heat' ? 'отопл.' : 'ГВС') + '» справа' });
+    (c === 'heat' ? [1, 2] : [3, 4]).forEach((pp) => {
+      const cl = closed(pp);
+      const stuck = cl.filter((v) => v.stuck || v.broken);
+      L.push({ t: 'Задвижки ' + D.PIPES[pp].name + ' (' + vs(pp).map((v) => v.id).join(', ') + ') открыты', ok: !cl.length,
+        how: stuck.length ? stuck.map((v) => v.id).join(', ') + ' закисла — расходить' : 'открыть ' + cl.map((v) => v.id).join(', ') });
     });
+    if (c === 'heat') {
+      const low = C.ps < 3.3, high = C.ps > 5.5;
+      L.push({ t: 'Давление 3.5–4.5 бар (сейчас ' + C.ps.toFixed(1) + ')', ok: !low && !high, wait: low && (C.feed || (C.auto && C.autoOn)) && !C.drain && !s.ev.hvs,
+        how: high ? 'много — ненадолго открыть дренаж' : s.ev.hvs ? 'нет холодной воды — подпитать нечем' : C.feed ? 'идёт подпитка — жди' : 'открыть подпитку (кран у Т2)' });
+      if (!C.auto) L.push({ t: 'Подпитка закрыта', ok: !C.feed || low, wait: C.feed && low, how: C.feed && !low ? 'закрыть кран подпитки!' : 'закроешь, когда наберётся' });
+    } else {
+      L.push({ t: 'Холодная вода в квартале', ok: !s.ev.hvs, how: 'водоканал отключил — ждать' });
+      L.push({ t: 'Давление ГВС (сейчас ' + C.ps.toFixed(1) + ')', ok: C.ps >= 3, wait: !C.drain && !s.ev.hvs && C.ps < 3, how: C.drain ? 'закрыть дренаж — наполнится само' : 'наполняется само — жди' });
+    }
+    const run = pumps.some((p) => p.on && !p.broken);
+    L.push({ t: 'Насос ' + pumps.map((p) => p.id).join(' или ') + ' работает', ok: run, pump: true,
+      how: pumps.every((p) => p.broken) ? 'оба в аварии — ремонт' : 'запустить (когда всё выше ✔)' });
+    return L;
+  }
+  function drawChecklist(b, c) {
+    checklist(c).forEach((x) => kv(b, (x.ok ? '✔ ' : x.wait ? '… ' : '✘ ') + x.t, x.ok ? 'да' : x.how, x.ok ? 'ok' : x.wait ? 'warn' : 'bad'));
   }
   function panelDesk() {
     const s = G.S;
@@ -350,7 +403,7 @@ G.UI = (() => {
       sect(b, 'Журнал обхода');
       if (!s.journal.entries.length) para(b, 'Пусто.', true);
       s.journal.entries.slice(0, 6).forEach((e) => para(b, U.dateStr(e.t) + ' ' + U.clock(e.t) + ' — ' + e.text, true));
-    });
+    }, true);
   }
   function invList(b, eatable) {
     const P = G.S.p;
@@ -415,7 +468,7 @@ G.UI = (() => {
       kv(b, 'Батарея', U.deg((s.heat.t1 + s.heat.t2) / 2) + 'C');
       kv(b, 'На улице', U.deg1(s.tout) + 'C');
       if (s.wx.snap) kv(b, 'Прогноз', s.wx.snap.delta < 0 ? 'держится мороз' : 'оттепель');
-    });
+    }, true);
   }
 
   // ================= дома квартала
@@ -439,7 +492,7 @@ G.UI = (() => {
       btn(b, 'Спуститься в подвал (узел ввода)', () => { s.house = i; G.Main.enter('house'); }, { cls: D.HOUSES[i].mine ? '' : 'main' });
       btn(b, 'Поговорить с жильцами у подъезда', () => A().talk(i), { sub: dur(10) });
       s.tasks.filter((k) => k.type === 'job' && k.ref === i && !k.done && !k.failed).forEach((k) => btn(b, 'Шабашка: кв. ' + k.apt + ' — ' + k.job, () => A().job(k.id), { sub: U.money(k.money) + ' · ' + dur(k.min) }));
-    });
+    }, true);
   }
   function panelBasement(i) {
     const s = G.S;
@@ -453,7 +506,7 @@ G.UI = (() => {
       s.tasks.filter((k) => k.type === 'job' && k.ref === i && !k.done && !k.failed).forEach((k) => btn(b, 'Шабашка: кв. ' + k.apt + ' — ' + k.job, () => A().job(k.id), { sub: U.money(k.money) + ' · ' + dur(k.min) }));
       if (s.ev.burst && s.ev.burst.house === i && s.ev.burst.called === null) btn(b, 'Вызвать аварийную бригаду на порыв!', () => A().callBrigade(), { cls: 'danger' });
       btn(b, 'Выйти на улицу', () => G.Main.exit(), { cls: 'ghost' });
-    });
+    }, true);
   }
 
   // ================= магазин
@@ -608,6 +661,7 @@ G.UI = (() => {
       '<li><b style="color:#f08c1a">Т3</b> — горячая вода в краны, <b style="color:#9b45c9">Т4</b> — её циркуляция.</li></ul>' +
       '<p><b>ЦТП.</b> Тапай по насосам, задвижкам, теплообменникам, манометрам — откроется панель с состоянием и работами. Свайпом можно двигать помещение. Каждый рабочий день делай <b>обход</b> (стол с журналом): начальник читает журнал и выдаёт заявки.</p>' +
       '<p><b>Замена задвижки:</b> остановить насосы контура → закрыть вторую задвижку на той же трубе → открыть дренаж, дождаться 0 бар → открутить болты, поставить новую, затянуть крест-накрест → открыть задвижки, закрыть дренаж, подпиткой поднять давление до ~4 бар (ГВС наполнится сам) → запустить насос.</p>' +
+      '<p><b>Пуск отопления</b> (если стоит): закрыть «Дренаж отопл.» → открыть задвижки Зд1–Зд4 → открыть подпитку и ждать ~4 бар (время должно идти, ×5 ускорит) → закрыть подпитку → запустить Н1 или Н2. В шкафу управления есть чек-лист: что мешает — красным.</p>' +
       '<p><b>Насосы</b> работают парами: рабочий и резервный. Смазывай подшипники, меняй уплотнения, следи за шумом. При ремонте по техкарте сначала обесточь — иначе удар током.</p>' +
       '<p><b>Квартал.</b> Над домами — температура в квартирах и горячей воды. Если холодно — жильцы звонят. Регулятор в шкафу управления позволяет поднять или опустить график.</p>' +
       '<p><b>Жизнь.</b> Ешь, спи, отдыхай. Зарплата 5-го и 20-го. Запчасти бесплатно со склада (через телефон, к утру) или сразу в магазине за свои. Шабашки у жильцов — подработка.</p>' +
@@ -639,7 +693,7 @@ G.UI = (() => {
 
   const HINTS = {
     street: 'Это твой квартал. Тапни по зданию — пойдёшь туда. Над домами: температура в квартирах и горячей воды. Свайп — прокрутка. Под землёй видно 4 трубы.',
-    ctp: 'Твой ЦТП. Тапай по насосам, задвижкам, манометрам. Красная — Т1, синяя — Т2 (отопление), оранжевая — Т3, фиолетовая — Т4 (ГВС). Свайп двигает помещение.',
+    ctp: 'Твой ЦТП. Тапай по насосам, задвижкам, манометрам. Красная — Т1, синяя — Т2 (отопление), оранжевая — Т3, фиолетовая — Т4 (ГВС). «Шкаф» — чек-лист пуска.',
     home: 'Квартира. Кровать — сон, кухня — еда, телевизор — настроение. Батарея греется от твоего же ЦТП.',
     shop: 'Магазин: еда, запчасти, инструмент. Запчасти бесплатно — через склад в телефоне, но привезут только к утру.',
     house: 'Подвал дома: узел ввода. Здесь спускают воздух, ставят хомуты, снимают показания.',
@@ -651,7 +705,12 @@ G.UI = (() => {
     toast(HINTS[scene], '', null, 9000);
   }
 
-  function init() { buildHud(); }
+  function init() {
+    buildHud();
+    const touch = () => { lastTouch = performance.now(); };
+    $('panel').addEventListener('pointerdown', touch, true);
+    $('p-body').addEventListener('scroll', touch, { passive: true });
+  }
 
   return Object.assign(api, { init, hud, tick, toast, onMessage, say, flash, ring, panel, reopen, closePanel, hidePanelForBusy, isModal,
     panelOpen, overlayOpen, closeOverlay, panelPump, panelValve, panelHX, panelFilter, panelDrain, panelFeed, panelGauge, panelCabinet,

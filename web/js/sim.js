@@ -69,6 +69,8 @@ G.Sim = (() => {
     if (H.auto) { if (H.ps < 3.8) H.autoOn = true; else if (H.ps > 4.2) H.autoOn = false; }
     const feeding = (H.feed || (H.auto && H.autoOn)) && !S.ev.hvs;
     if (feeding) dps += 0.06;
+    if (H.feed && H.ps > 4.6 && !H.feedWarn) { H.feedWarn = true; G.Ev.msg('Мысли', 'Манометр отопления ' + H.ps.toFixed(1) + ' бар — пора закрывать подпитку!', true); }
+    if (!H.feed || H.ps < 4) H.feedWarn = false;
     H.ps = U.clamp(H.ps + dps, 0, 9);
 
     const sched = tSched(S.tout) + H.corr;
@@ -90,7 +92,7 @@ G.Sim = (() => {
       if (!p.on || p.broken) continue;
       if (H.ps < 0.8) {
         wearRun(p, 0.25, 0.15);
-        if (!p.dryMsg) { p.dryMsg = true; G.Ev.alarm('Насос ' + p.id + ' работает всухую! Нет давления в отоплении.'); }
+        if (!p.dryMsg) { p.dryMsg = true; G.Ev.alarm('Насос ' + p.id + ' работает всухую! Нет давления в отоплении. Останови насос, закрой дренаж и подпитай до 4 бар — чек-лист в шкафу.'); }
       } else p.dryMsg = false;
       if (!open) {
         wearRun(p, 0.01, 0.04);
@@ -135,7 +137,7 @@ G.Sim = (() => {
       if (!p.on || p.broken) continue;
       if (W.ps < 0.8) {
         wearRun(p, 0.25, 0.15);
-        if (!p.dryMsg) { p.dryMsg = true; G.Ev.alarm('Насос ' + p.id + ' работает всухую! Нет давления в ГВС.'); }
+        if (!p.dryMsg) { p.dryMsg = true; G.Ev.alarm('Насос ' + p.id + ' работает всухую! Нет давления в ГВС. Останови насос и закрой дренаж ГВС.'); }
       } else p.dryMsg = false;
       if (!(open3 && open4)) {
         wearRun(p, 0.01, 0.04);

@@ -23,13 +23,13 @@ G.Act = (() => {
     if (Sim.anyOn(s, c)) r.push('остановить насосы ' + circName(c));
     const other = s.valves.find((o) => o.pipe === v.pipe && o !== v);
     if (other.open) r.push('закрыть задвижку ' + other.id + ' на этой же трубе');
-    if (s[c].ps > 0.3) r.push('сбросить давление дренажом (сейчас ' + s[c].ps.toFixed(1) + ' бар)');
+    if (s[c].ps > 0.3) r.push('открыть «Дренаж ' + (c === 'heat' ? 'отопл.' : 'ГВС') + '» и дождаться 0 бар (сейчас ' + s[c].ps.toFixed(1) + ')');
     return r;
   }
   function dryReasons(c) {
     const s = G.S, r = [];
     if (Sim.anyOn(s, c)) r.push('остановить насосы ' + circName(c));
-    if (s[c].ps > 0.5) r.push('сбросить давление дренажом (сейчас ' + s[c].ps.toFixed(1) + ' бар)');
+    if (s[c].ps > 0.5) r.push('открыть «Дренаж ' + (c === 'heat' ? 'отопл.' : 'ГВС') + '» и дождаться 0 бар (сейчас ' + s[c].ps.toFixed(1) + ')');
     return r;
   }
   function needItems(list) {
