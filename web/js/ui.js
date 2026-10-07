@@ -6,7 +6,7 @@ G.UI = (() => {
   const A = () => G.Act;
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  let cur = null, resume = false, lastScene = null, lastActKey = '', hudAcc = 1, liveAcc = 0, lastTouch = 0, orderDraft = {};
+  let cur = null, resume = false, lastScene = null, lastActKey = '', hudAcc = 1, liveAcc = 0, lastTouch = 0, pressing = false, orderDraft = {};
   const api = { dirty: true };
 
   // ---------- конструкторы
@@ -171,7 +171,7 @@ G.UI = (() => {
     liveAcc += dt;
     if (liveAcc > 0.8) {
       liveAcc = 0;
-      if (cur && cur.live && panelOpen() && !G.busy && performance.now() - lastTouch > 1500) render();
+      if (cur && cur.live && panelOpen() && !G.busy && !pressing && performance.now() - lastTouch > 1500) render();
     }
   }
   function ring() { $('b-phone').classList.add('ring'); }
@@ -192,14 +192,13 @@ G.UI = (() => {
       if (s.p.tools.pyrometer && p.on) { const tb = 35 + p.bear * 0.35 + (p.lube < 25 ? 18 : 0); kv(b, 'Пирометр: подшипник', Math.round(tb) + '°C', tb > 70 ? 'bad' : tb > 55 ? 'warn' : 'ok'); }
       kv(b, 'Смазка подшипников', p.lube > 60 ? 'свежая' : p.lube > 25 ? 'нормально' : 'сухо — смазать!', p.lube > 60 ? 'ok' : p.lube > 25 ? '' : 'bad');
       kv(b, 'Уплотнение вала', p.seal >= 100 ? 'течёт струёй!' : p.seal >= 75 ? 'подкапывает' : 'сухо', p.seal >= 100 ? 'bad' : p.seal >= 75 ? 'warn' : 'ok');
-      const pre = checklist(p.circ).filter((x) => !x.ok && !x.pump);
-      if (!p.on && pre.length) {
+      if (!p.on && !p.broken) {
         sect(b, 'Перед пуском ' + (p.circ === 'heat' ? 'отопления' : 'ГВС'));
-        pre.forEach((x) => kv(b, (x.wait ? '… ' : '✘ ') + x.t, x.how, x.wait ? 'warn' : 'bad'));
+        drawChecklist(b, p.circ, true);
       }
       sect(b, 'Действия');
       if (p.on) btn(b, 'Остановить насос', () => A().pumpStop(i), { sub: '1 мин' });
-      else btn(b, 'Запустить насос', () => A().pumpStart(i), { cls: p.broken ? 'warn' : 'main', sub: p.broken ? 'Сначала ремонт' : s[p.circ].ps < 1 ? 'Внимание: давления нет — сухой ход!' : '1 мин' });
+      else btn(b, 'Запустить насос', () => A().pumpStart(i), startOpts(p));
       btn(b, 'Смазать подшипники', () => A().pumpLube(i), { cls: inv('grease') ? '' : 'warn', sub: 'Литол-24 (есть ' + inv('grease') + ' порц.) · ' + dur(10) + ' · можно на ходу' });
       const rb = (p.on ? ['остановить насос'] : []).concat(A().needItems([['bearing', 2], ['grease', 1]]));
       btn(b, 'Заменить подшипники', () => A().pumpBearings(i), { cls: rb.length ? 'warn' : '', sub: reqSub(rb, 'Подшипник ×2 + смазка · около ' + dur(90)) });
@@ -302,14 +301,16 @@ G.UI = (() => {
     panel('Подпитка отопления', (b) => {
       const H = s.heat;
       para(b, 'Кран с холодного водопровода в обратку Т2. Восполняет утечки. Держи статику 3.5–4.5 бар. Выше 6.5 — сорвёт прокладки!', true);
-      kv(b, 'Давление (статика)', H.ps.toFixed(2) + ' бар', H.ps > 6 || H.ps < 2 ? 'bad' : H.ps < 3.3 ? 'warn' : 'ok');
+      kv(b, 'Давление (статика)', H.ps.toFixed(2) + ' бар', H.ps > 6 || H.ps < 2 ? 'bad' : H.ps < G.Sim.P_LOW || H.ps > G.Sim.P_HIGH ? 'warn' : 'ok');
       kv(b, 'Кран подпитки', H.feed ? 'ОТКРЫТ' : 'закрыт', H.feed ? 'warn' : '');
-      if (H.feed && H.ps < 4) kv(b, 'До 4 бар', H.drain ? 'никогда — открыт дренаж!' : '≈ ' + U.dur((4 - H.ps) / 0.06), H.drain ? 'bad' : 'warn');
-      if (H.feed && H.ps >= 4) kv(b, 'Давление набрано', 'закрой подпитку!', 'bad');
+      const Sm = G.Sim, rate = Sm.feedNetRate(s);
+      if (H.feed && H.ps < Sm.P_CLOSE) kv(b, 'До ' + Sm.P_CLOSE + ' бар', H.drain ? 'не наберётся — открыт дренаж!' : s.ev.hvs ? 'не наберётся — нет ХВС'
+        : rate <= 0 ? 'не растёт — течь больше подпитки!' : '≈ ' + U.dur((Sm.P_CLOSE - H.ps) / rate), rate > 0 ? 'warn' : 'bad');
+      if (H.feed && H.ps >= Sm.P_CLOSE) kv(b, 'Давление набрано', 'закрой подпитку!', 'bad');
       if (H.auto) kv(b, 'Регулятор РД-3М', H.autoOn ? 'подпитывает' : 'держит 3.8–4.2 бар', 'ok');
       btn(b, H.feed ? 'Закрыть подпитку' : 'Открыть подпитку', () => A().feed(), { cls: 'main', sub: dur(1) + ' · около +0.06 бар/мин' });
       if (!H.auto) btn(b, 'Установить регулятор подпитки', () => A().installReg(), { cls: inv('regulator') ? '' : 'warn', sub: inv('regulator') ? 'около ' + dur(75) : 'Нужен регулятор РД-3М (склад, с 4-го разряда)' });
-      para(b, 'Пока панель открыта, время идёт — манометр растёт на глазах.', true);
+      if (H.feed) para(b, s.speed ? 'Пока панель открыта, время идёт — манометр растёт на глазах.' : 'Игра на паузе (❚❚) — нажми ×1 или ×5, иначе давление не растёт.', true);
     }, true);
   }
   function panelGauge(pipe) {
@@ -361,7 +362,8 @@ G.UI = (() => {
       sect(b, 'Насосы');
       s.pumps.forEach((p, i) => {
         const st = p.broken ? 'АВАРИЯ' : p.on ? 'работает' : 'стоит';
-        btn(b, p.id + ' (' + (p.circ === 'heat' ? 'отопление' : 'ГВС') + ') — ' + st, () => (p.on ? A().pumpStop(i) : A().pumpStart(i)), { cls: p.broken ? 'danger' : p.on ? '' : 'main', sub: p.on ? 'нажми — остановить' : p.broken ? 'нужен ремонт' : 'нажми — запустить' });
+        btn(b, p.id + ' (' + (p.circ === 'heat' ? 'отопление' : 'ГВС') + ') — ' + st, () => (p.on ? A().pumpStop(i) : A().pumpStart(i)),
+          p.on ? { sub: 'нажми — остановить' } : p.broken ? { cls: 'danger', sub: 'нужен ремонт' } : startOpts(p));
       });
       sect(b, 'Регулятор отопления (погодный)');
       const sched = G.Sim.tSched(s.tout);
@@ -390,15 +392,19 @@ G.UI = (() => {
     L.push({ t: 'Дренаж ' + A().circName(c) + ' закрыт', ok: !C.drain, how: 'закрыть вентиль «Дренаж ' + (c === 'heat' ? 'отопл.' : 'ГВС') + '» справа' });
     (c === 'heat' ? [1, 2] : [3, 4]).forEach((pp) => {
       const cl = closed(pp);
-      const stuck = cl.filter((v) => v.stuck || v.broken);
-      L.push({ t: 'Задвижки ' + D.PIPES[pp].name + ' (' + vs(pp).map((v) => v.id).join(', ') + ') открыты', ok: !cl.length,
-        how: stuck.length ? stuck.map((v) => v.id).join(', ') + ' закисла — расходить' : 'открыть ' + cl.map((v) => v.id).join(', ') });
+      const how = cl.map((v) => (v.broken ? v.id + ' — шпиндель сорван, менять' : v.stuck ? v.id + ' закисла — расходить'
+        : 'открыть ' + v.id + (v.outer ? ' (справа у стены)' : ''))).join('; ');
+      L.push({ t: 'Задвижки ' + D.PIPES[pp].name + ' (' + vs(pp).map((v) => v.id).join(', ') + ') открыты', ok: !cl.length, how });
     });
     if (c === 'heat') {
-      const low = C.ps < 3.3, high = C.ps > 5.5;
-      L.push({ t: 'Давление 3.5–4.5 бар (сейчас ' + C.ps.toFixed(1) + ')', ok: !low && !high, wait: low && (C.feed || (C.auto && C.autoOn)) && !C.drain && !s.ev.hvs,
-        how: high ? 'много — ненадолго открыть дренаж' : s.ev.hvs ? 'нет холодной воды — подпитать нечем' : C.feed ? 'идёт подпитка — жди' : 'открыть подпитку (кран у Т2)' });
-      if (!C.auto) L.push({ t: 'Подпитка закрыта', ok: !C.feed || low, wait: C.feed && low, how: C.feed && !low ? 'закрыть кран подпитки!' : 'закроешь, когда наберётся' });
+      const Sm = G.Sim, low = C.ps < Sm.P_LOW, high = C.ps > Sm.P_HIGH;
+      const feeding = C.feed || (C.auto && C.autoOn);
+      const rising = feeding && Sm.feedNetRate(s) > 0;
+      L.push({ t: 'Давление ' + Sm.P_LOW + '–' + Sm.P_HIGH + ' бар (сейчас ' + C.ps.toFixed(1) + ')', ok: !low && !high, wait: low && rising,
+        how: high ? 'много — ненадолго открыть дренаж' : C.drain ? 'сначала закрой дренаж' : s.ev.hvs ? 'нет холодной воды — подпитать нечем'
+          : feeding && !rising ? 'течь больше подпитки — ищи утечку' : C.auto && C.autoOn ? 'регулятор подпитывает — жди' : C.feed ? 'идёт подпитка — жди' : 'открыть подпитку (кран у Т2)' });
+      if (!C.auto || C.feed) L.push({ t: 'Подпитка закрыта', ok: !C.feed, wait: C.feed && C.ps < Sm.P_CLOSE && rising,
+        how: C.ps >= Sm.P_CLOSE ? 'закрыть кран подпитки!' : rising ? 'закроешь на ~' + Sm.P_CLOSE + ' бар' : 'давление не растёт — закрой, разберись' });
     } else {
       L.push({ t: 'Холодная вода в квартале', ok: !s.ev.hvs, how: 'водоканал отключил — ждать' });
       L.push({ t: 'Давление ГВС (сейчас ' + C.ps.toFixed(1) + ')', ok: C.ps >= 3, wait: !C.drain && !s.ev.hvs && C.ps < 3, how: C.drain ? 'закрыть дренаж — наполнится само' : 'наполняется само — жди' });
@@ -408,8 +414,16 @@ G.UI = (() => {
       how: pumps.every((p) => p.broken) ? 'оба в аварии — ремонт' : 'запустить (когда всё выше ✔)' });
     return L;
   }
-  function drawChecklist(b, c) {
-    checklist(c).forEach((x) => kv(b, (x.ok ? '✔ ' : x.wait ? '… ' : '✘ ') + x.t, x.ok ? 'да' : x.how, x.ok ? 'ok' : x.wait ? 'warn' : 'bad'));
+  function drawChecklist(b, c, noPump) {
+    checklist(c).filter((x) => !(noPump && x.pump)).forEach((x) => kv(b, (x.ok ? '✔ ' : x.wait ? '… ' : '✘ ') + x.t, x.ok ? 'да' : x.how, x.ok ? 'ok' : x.wait ? 'warn' : 'bad'));
+  }
+  // кнопка пуска: оранжевая, только если перед пуском всё ✔
+  function startOpts(p) {
+    const s = G.S;
+    if (p.broken) return { cls: 'warn', sub: 'Сначала ремонт' };
+    const bad = checklist(p.circ).filter((x) => !x.ok && !x.pump);
+    if (!bad.length) return { cls: 'main', sub: 'нажми — запустить · 1 мин' };
+    return { cls: 'warn', sub: (s[p.circ].ps < 1 ? 'Давления нет — будет сухой ход! ' : '') + 'Сначала: ' + bad.map((x) => x.t.replace(/ \(сейчас.*\)/, '')).join('; ') };
   }
   function panelDesk() {
     const s = G.S;
@@ -713,7 +727,7 @@ G.UI = (() => {
 
   const HINTS = {
     street: 'Это твой квартал. Тапни по зданию — пойдёшь туда. Над домами: температура в квартирах и горячей воды. Свайп — прокрутка. Под землёй видно 4 трубы.',
-    ctp: 'Твой ЦТП. Тапай по насосам, задвижкам, манометрам. Красная — Т1, синяя — Т2 (отопление), оранжевая — Т3, фиолетовая — Т4 (ГВС). «Шкаф» — чек-лист пуска.',
+    ctp: 'Твой ЦТП. Тапай по насосам, задвижкам, манометрам. Красная — Т1, синяя — Т2 (отопление), оранжевая — Т3, фиолетовая — Т4 (ГВС). «Шкаф» — чек-лист пуска. Свайп двигает помещение.',
     home: 'Квартира. Кровать — сон, кухня — еда, телевизор — настроение. Батарея греется от твоего же ЦТП.',
     shop: 'Магазин: еда, запчасти, инструмент. Запчасти бесплатно — через склад в телефоне, но привезут только к утру.',
     house: 'Подвал дома: узел ввода. Здесь спускают воздух, ставят хомуты, снимают показания.',
@@ -728,7 +742,10 @@ G.UI = (() => {
   function init() {
     buildHud();
     const touch = () => { lastTouch = performance.now(); };
-    $('panel').addEventListener('pointerdown', touch, true);
+    $('panel').addEventListener('pointerdown', () => { touch(); pressing = true; }, true);
+    const release = () => { if (pressing) touch(); pressing = false; };
+    document.addEventListener('pointerup', release, true);
+    document.addEventListener('pointercancel', release, true);
     $('p-body').addEventListener('scroll', touch, { passive: true });
   }
 

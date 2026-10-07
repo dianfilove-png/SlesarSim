@@ -33,6 +33,17 @@ G.Sim = (() => {
     return sum;
   };
   const circPumps = (S, c) => S.pumps.filter((p) => p.circ === c);
+  // пороги давления отопления (статика, бар): норма P_LOW..P_HIGH, подпитку закрывать с P_CLOSE
+  const P_LOW = 3.5, P_CLOSE = 4, P_WARN = 4.6, P_HIGH = 5, FEED_RATE = 0.06;
+  // все утечки отопления, бар/ч: ЦТП, подвалы домов, порыв теплотрассы
+  const heatLeak = (S) => {
+    let leak = leakOf(S, 'heat');
+    for (const h of S.houses) if (h.leak) leak += 0.06;
+    if (S.ev.burst && !S.ev.burst.isolated) leak += 3;
+    return leak;
+  };
+  // чистое изменение давления отопления при открытой подпитке, бар/мин
+  const feedNetRate = (S) => (S.ev.hvs ? 0 : FEED_RATE) - heatLeak(S) / 60 - (S.heat.drain ? 1 : 0);
   const anyOn = (S, c) => S.pumps.some((p) => p.circ === c && p.on);
 
   function weather(S, t) {
@@ -61,16 +72,18 @@ G.Sim = (() => {
     H.q += (q - H.q) * 0.3;
     if (H.q < 0.001) H.q = 0;
 
-    let leak = leakOf(S, 'heat');
-    for (const h of S.houses) if (h.leak) leak += 0.06;
-    if (S.ev.burst && !S.ev.burst.isolated) leak += 3;
+    const leak = heatLeak(S);
     let dps = -leak / 60;
     if (H.drain) dps -= H.ps * 0.18 + 0.02;
     if (H.auto) { if (H.ps < 3.8) H.autoOn = true; else if (H.ps > 4.2) H.autoOn = false; }
     const feeding = (H.feed || (H.auto && H.autoOn)) && !S.ev.hvs;
-    if (feeding) dps += 0.06;
-    if (H.feed && H.ps > 4.6 && !H.feedWarn) { H.feedWarn = true; G.Ev.msg('Мысли', 'Манометр отопления ' + H.ps.toFixed(1) + ' бар — пора закрывать подпитку!', true); }
-    if (!H.feed || H.ps < 4) H.feedWarn = false;
+    if (feeding) dps += FEED_RATE;
+    if (H.feed && H.ps > P_WARN && !H.feedWarn) {
+      H.feedWarn = true;
+      if (S.speed > 1) S.speed = 1;
+      G.Ev.msg('Мысли', 'Манометр отопления ' + H.ps.toFixed(1) + ' бар — пора закрывать подпитку!');
+    }
+    if (!H.feed || H.ps < P_CLOSE) H.feedWarn = false;
     H.ps = U.clamp(H.ps + dps, 0, 9);
 
     const sched = tSched(S.tout) + H.corr;
@@ -92,7 +105,11 @@ G.Sim = (() => {
       if (!p.on || p.broken) continue;
       if (H.ps < 0.8) {
         wearRun(p, 0.25, 0.15);
-        if (!p.dryMsg) { p.dryMsg = true; G.Ev.alarm('Насос ' + p.id + ' работает всухую! Нет давления в отоплении. Останови насос, закрой дренаж и подпитай до 4 бар — чек-лист в шкафу.'); }
+        if (!p.dryMsg) {
+          p.dryMsg = true;
+          G.Ev.alarm('Насос ' + p.id + ' всухую — нет давления в отоплении! ' + (S.ev.hvs ? 'Стоп насос: нет ХВС, подпитать нечем.'
+            : 'Стоп насос' + (H.drain ? ', закрой дренаж' : '') + ', подпитка до 4 бар (чек-лист в шкафу).'));
+        }
       } else p.dryMsg = false;
       if (!open) {
         wearRun(p, 0.01, 0.04);
@@ -137,7 +154,10 @@ G.Sim = (() => {
       if (!p.on || p.broken) continue;
       if (W.ps < 0.8) {
         wearRun(p, 0.25, 0.15);
-        if (!p.dryMsg) { p.dryMsg = true; G.Ev.alarm('Насос ' + p.id + ' работает всухую! Нет давления в ГВС. Останови насос и закрой дренаж ГВС.'); }
+        if (!p.dryMsg) {
+          p.dryMsg = true;
+          G.Ev.alarm('Насос ' + p.id + ' всухую — нет давления в ГВС! ' + (S.ev.hvs ? 'Стоп насос и жди водоканал.' : W.drain ? 'Стоп насос, закрой дренаж ГВС.' : 'Стоп насос.'));
+        }
       } else p.dryMsg = false;
       if (!(open3 && open4)) {
         wearRun(p, 0.01, 0.04);
@@ -246,6 +266,6 @@ G.Sim = (() => {
     G.Ev.tick(S, season);
   }
 
-  return { step, netReturn, seasonal, heatSeason, tSched, drawProfile, pumpEff, headOf, pipeOpen, leakOf, sealLeak,
+  return { step, netReturn, heatLeak, feedNetRate, P_LOW, P_CLOSE, P_WARN, P_HIGH, FEED_RATE, seasonal, heatSeason, tSched, drawProfile, pumpEff, headOf, pipeOpen, leakOf, sealLeak,
     valveLeak, flangeLeak, circPumps, anyOn, GLAND };
 })();

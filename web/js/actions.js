@@ -18,23 +18,24 @@ G.Act = (() => {
   }
 
   // ---------- проверки
+  const drainText = (c, C) => (C.drain ? 'дождаться 0 бар на дренаже (сейчас ' : 'открыть «Дренаж ' + (c === 'heat' ? 'отопл.' : 'ГВС') + '» и дождаться 0 бар (сейчас ') + C.ps.toFixed(1) + ')';
   function isoReasons(v) {
     const s = G.S, c = D.PIPES[v.pipe].circ, r = [];
     if (Sim.anyOn(s, c)) r.push('остановить насосы ' + circName(c));
     const other = s.valves.find((o) => o.pipe === v.pipe && o !== v);
     if (other.open) r.push('закрыть задвижку ' + other.id + ' на этой же трубе');
-    if (s[c].ps > 0.3) r.push('открыть «Дренаж ' + (c === 'heat' ? 'отопл.' : 'ГВС') + '» и дождаться 0 бар (сейчас ' + s[c].ps.toFixed(1) + ')');
+    if (s[c].ps > 0.3) r.push(drainText(c, s[c]));
     return r;
   }
   function dryReasons(c) {
     const s = G.S, r = [];
     if (Sim.anyOn(s, c)) r.push('остановить насосы ' + circName(c));
-    if (s[c].ps > 0.5) r.push('открыть «Дренаж ' + (c === 'heat' ? 'отопл.' : 'ГВС') + '» и дождаться 0 бар (сейчас ' + s[c].ps.toFixed(1) + ')');
+    if (s[c].ps > 0.5) r.push(drainText(c, s[c]));
     return r;
   }
   function needItems(list) {
     const r = [];
-    for (const [id, n] of list) if (!has(id, n)) r.push('нужно: ' + D.ITEMS[id].name + (n > 1 ? ' ×' + n : '') + ' (есть ' + inv(id) + ')');
+    for (const [id, n] of list) if (!has(id, n)) r.push(D.ITEMS[id].name + (n > 1 ? ' ×' + n : '') + ' (есть ' + inv(id) + ')');
     return r;
   }
 
@@ -89,7 +90,7 @@ G.Act = (() => {
   function valveRepack(i) {
     const s = G.S, v = s.valves[i], c = D.PIPES[v.pipe].circ;
     const r = dryReasons(c).concat(needItems([['packing', 1]]));
-    if (r.length) return toast('Нельзя: ' + r.join('; '), 'bad');
+    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
     G.MG.proc('repack', (q) => {
       take('packing');
       v.packing = 3; v.gland = q < 60 && Math.random() < 0.5 ? 1 : 0;
@@ -102,7 +103,7 @@ G.Act = (() => {
   function valveReplace(i) {
     const s = G.S, v = s.valves[i];
     const r = isoReasons(v).concat(needItems([['valve', 1], ['gasket', 2]]));
-    if (r.length) return toast('Нельзя: ' + r.join('; '), 'bad');
+    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
     G.MG.bolts({ title: 'Замена задвижки ' + v.id, swap: 'Снимаю старую задвижку, ставлю новую на свежие прокладки…', swapMin: 20, rust: 0.5 - v.cond / 250 }, (q) => {
       take('valve'); take('gasket', 2);
       Object.assign(v, { cond: 100, gland: 0, packing: 3, stuck: false, broken: false, open: false, replacedAt: s.t, lastOp: s.t,
@@ -117,7 +118,7 @@ G.Act = (() => {
   function valveRegasket(i) {
     const s = G.S, v = s.valves[i];
     const r = isoReasons(v).concat(needItems([['gasket', 2]]));
-    if (r.length) return toast('Нельзя: ' + r.join('; '), 'bad');
+    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
     G.MG.bolts({ title: 'Замена прокладок ' + v.id, swap: 'Выбиваю старые прокладки, ставлю новые…', swapMin: 10, rust: 0.4 - v.cond / 300 }, (q) => {
       take('gasket', 2);
       v.flange = Math.random() < (100 - q) / 100 * 0.8 ? 1 : 0;
@@ -156,7 +157,7 @@ G.Act = (() => {
   function pumpBearings(i) {
     const s = G.S, p = s.pumps[i];
     const r = (p.on ? ['остановить насос'] : []).concat(needItems([['bearing', 2], ['grease', 1]]));
-    if (r.length) return toast('Нельзя: ' + r.join('; '), 'bad');
+    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
     G.MG.proc('bearings', (q) => {
       take('bearing', 2); take('grease');
       p.bear = Math.round((100 - q) * 0.12); p.broken = false; p.lube = 100; p.serviced = s.t;
@@ -169,7 +170,7 @@ G.Act = (() => {
   function pumpSeal(i) {
     const s = G.S, p = s.pumps[i];
     const r = (p.on ? ['остановить насос'] : []).concat(needItems([['seal', 1]]));
-    if (r.length) return toast('Нельзя: ' + r.join('; '), 'bad');
+    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
     G.MG.proc('seal', (q) => {
       take('seal');
       p.seal = Math.round((100 - q) * 0.1); p.serviced = s.t;
@@ -201,7 +202,7 @@ G.Act = (() => {
   function cleanFilter() {
     const s = G.S;
     const r = dryReasons('heat').concat(needItems([['gasket', 1]]));
-    if (r.length) return toast('Нельзя: ' + r.join('; '), 'bad');
+    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
     G.MG.proc('filter', (q) => {
       take('gasket');
       s.heat.clog = Math.round((100 - q) * 0.1); s.heat.cleanedAt = s.t;
@@ -214,7 +215,7 @@ G.Act = (() => {
   function flush(c) {
     const s = G.S;
     const r = dryReasons(c).concat(needItems([['reagent', 1]]));
-    if (r.length) return toast('Нельзя: ' + r.join('; '), 'bad');
+    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
     G.MG.proc('flush', (q) => {
       take('reagent');
       s[c].foul = Math.max(0, s[c].foul - 85 * q / 100); s[c].flushedAt = s.t;
