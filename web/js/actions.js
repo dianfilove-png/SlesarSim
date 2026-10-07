@@ -246,7 +246,7 @@ G.Act = (() => {
       case 'bear': return 'Насос ' + s.pumps[x.i].id + ': шум и вибрация подшипников';
       case 'seal': return 'Насос ' + s.pumps[x.i].id + ': течь по валу';
       case 'clog': return 'Грязевик забит, большой перепад';
-      case 'foul': return 'ТО ' + circName(x.c) + ' зарос накипью';
+      case 'foul': return (x.c === 'heat' ? 'ТО отопления' : 'ВВП ГВС') + ' зарос накипью';
       case 'flood': return 'Вода на полу';
       default: return '?';
     }

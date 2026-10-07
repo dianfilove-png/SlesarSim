@@ -245,6 +245,16 @@ G.R = (() => {
     rect(x0 - 30, cy - 10, x1 - x0 + 50, 62, '#6b6a66');
     rect(x0 - 26, cy - 6, x1 - x0 + 42, 54, '#2f2c28');
     const H = s.heat, W = s.gvs;
+    // магистраль теплосети от ТЭЦ — входит в ЦТП слева
+    const nx = D.PLACES.ctp.x + 30, tRet = G.Sim.netReturn(s);
+    rect(-30, cy + 2, nx + 40, 30, '#6b6a66'); rect(-26, cy + 6, nx + 32, 22, '#2f2c28');
+    [[cy + 12, '#8e1b1b', s.tnet, 1], [cy + 22, '#1b2f70', tRet, -1]].forEach(([y, c, t, dir], k) => {
+      ctx.strokeStyle = tempColor(t, c); ctx.lineWidth = 7; ctx.lineCap = 'butt';
+      ctx.beginPath(); ctx.moveTo(-26, y); ctx.lineTo(nx + 6 + k * 12, y); ctx.lineTo(nx + 6 + k * 12, gy); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 2; ctx.setLineDash([6, 22]); ctx.lineDashOffset = -dir * anim * 30;
+      ctx.beginPath(); ctx.moveTo(-26, y); ctx.lineTo(nx, y); ctx.stroke(); ctx.setLineDash([]);
+    });
+    tag('магистраль от ТЭЦ → ' + U.deg(s.tnet) + ' / ' + U.deg(tRet), 300, cy - 4, '#3a1414', '#ffd36b', 10);
     const ps = [[1, H.t1, H.q, 1], [2, H.t2, H.q, -1], [3, W.t3, W.ps > 1 ? 0.6 + W.q * 0.4 : 0, 1], [4, W.t4, W.q, -1]];
     ps.forEach(([pipe, t, q, dir], k) => {
       const y = cy + 2 + k * 12;
@@ -329,8 +339,10 @@ G.R = (() => {
 
   // ================= ЦТП =================
   const CT = {
-    W: 1320, Y: { 1: 110, 2: 210, 3: 330, 4: 440 }, Y2b: 262, Y4b: 388,
-    vx: { inner: 560, outer: 1170 }, px: 780, floor: 505,
+    W: 1450, Y: { 1: 110, 2: 210, 3: 330, 4: 440 }, Y2b: 262, Y4b: 388,
+    vx: { inner: 690, outer: 1300 }, px: 910, floor: 505,
+    x0: 598, x1: 1430, br0: 840, br1: 980, wall: 1420, gx: 1344, fx: 1090, dx: 1230, feedX: 770, hvsX: 650,
+    netS: 375, netR: 425,
   };
   CT.valveX = (v) => (v.outer ? CT.vx.outer : CT.vx.inner);
   CT.pumpPos = (i) => [[CT.px, CT.Y[2], -1], [CT.px, CT.Y2b, 1], [CT.px, CT.Y[4], 1], [CT.px, CT.Y4b, -1]][i];
@@ -431,6 +443,23 @@ G.R = (() => {
     text(label, x + 35, y1 + 16, 12, '#fff', 'center', true);
     addHit(id, x - 6, y0 - 8, 84, y1 - y0 + 30);
   }
+  // водо-водяной подогреватель ГВС: две горизонтальные секции «труба в трубе» с калачом
+  function drawVVP(Wg, tp) {
+    const xl = 470, xr = 598, y3 = CT.Y[3], y4 = CT.Y[4];
+    const shell = mix('#5d6f84', '#8a6a3a', Wg.foul / 140);
+    pipeSeg(462, y3, 462, y4, D.PIPES[3].color, (tp[3] + tp[4]) / 2, 12);
+    pipeSeg(462, y3, xl, y3, D.PIPES[3].color, tp[3], 12);
+    pipeSeg(462, y4, xl, y4, D.PIPES[4].color, tp[4], 12);
+    [y3, y4].forEach((y) => {
+      rr(xl, y - 15, xr - xl, 30, 13); ctx.fillStyle = shell; ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(xl + 10, y - 8); ctx.lineTo(xr - 10, y - 8); ctx.stroke();
+      rect(xl - 2, y - 18, 7, 36, '#3a4654'); rect(xr - 5, y - 18, 7, 36, '#3a4654');
+    });
+    text('ВВП ГВС', (xl + xr) / 2, 372, 13, '#fff', 'center', true);
+    text('водо-водяной', (xl + xr) / 2, 389, 10, '#e8f0ff', 'center', true);
+    text('подогреватель', (xl + xr) / 2, 401, 10, '#e8f0ff', 'center', true);
+    addHit('hx:gvs', xl - 14, y3 - 22, xr - xl + 22, y4 - y3 + 44);
+  }
   function smallValve(x, y, open, label, id, vertical) {
     ctx.save(); ctx.translate(x, y); if (vertical) ctx.rotate(Math.PI / 2);
     ctx.beginPath(); ctx.moveTo(-9, -7); ctx.lineTo(9, 7); ctx.lineTo(9, -7); ctx.lineTo(-9, 7); ctx.closePath();
@@ -450,20 +479,20 @@ G.R = (() => {
     rect(-400, -200, W + 800, 450, '#cfcabb');
     rect(-400, 250, W + 800, 255, '#46706a');
     rect(-400, 248, W + 800, 4, '#2f4f4a');
-    for (let k = 0; k < 7; k++) circle(140 + k * 177, 60 + U.hash(k, 5) * 120, 18 + U.hash(k, 6) * 26, 'rgba(120,110,80,.08)');
+    for (let k = 0; k < 8; k++) circle(140 + k * 177, 60 + U.hash(k, 5) * 120, 18 + U.hash(k, 6) * 26, 'rgba(120,110,80,.08)');
     const fg = ctx.createLinearGradient(0, CT.floor, 0, CT.floor + 80);
     fg.addColorStop(0, '#7b7a74'); fg.addColorStop(1, '#5d5c57');
     ctx.fillStyle = fg; ctx.fillRect(-400, CT.floor, W + 800, LH);
     ctx.strokeStyle = 'rgba(0,0,0,.15)';
     for (let k = -4; k < 30; k++) { ctx.beginPath(); ctx.moveTo(k * 60, CT.floor); ctx.lineTo(k * 60 - 30, CT.floor + 60); ctx.stroke(); }
     // лампы
-    [300, 700, 1100].forEach((x) => { rect(x - 50, 52, 100, 8, '#ddd'); rect(x - 46, 60, 92, 4, '#fffbe8');
+    [300, 760, 1200].forEach((x) => { rect(x - 50, 52, 100, 8, '#ddd'); rect(x - 46, 60, 92, 4, '#fffbe8');
       const g = ctx.createLinearGradient(0, 60, 0, 300); g.addColorStop(0, 'rgba(255,250,220,.18)'); g.addColorStop(1, 'rgba(255,250,220,0)');
       ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(x - 46, 64); ctx.lineTo(x + 46, 64); ctx.lineTo(x + 140, 300); ctx.lineTo(x - 140, 300); ctx.fill(); });
     // стена справа
-    rect(1290, -200, 60, LH + 400, '#8b4a34');
+    rect(CT.wall, -200, 60, LH + 400, '#8b4a34');
     ctx.strokeStyle = 'rgba(0,0,0,.2)';
-    for (let yy = -200; yy < LH + 200; yy += 10) { ctx.beginPath(); ctx.moveTo(1290, yy); ctx.lineTo(1350, yy); ctx.stroke(); }
+    for (let yy = -200; yy < LH + 200; yy += 10) { ctx.beginPath(); ctx.moveTo(CT.wall, yy); ctx.lineTo(CT.wall + 60, yy); ctx.stroke(); }
     // ---- пост
     rect(30, 345, 72, 160, '#5d6b78'); rect(34, 349, 64, 152, '#6e7d8b'); rect(86, 420, 6, 14, '#222');
     rr(36, 318, 60, 20, 3); ctx.fillStyle = '#1b5e20'; ctx.fill(); text('ВЫХОД', 66, 328, 12, '#fff', 'center', true, false);
@@ -490,61 +519,88 @@ G.R = (() => {
     rr(258, 150, 60, 80, 2); ctx.fillStyle = '#efe9d8'; ctx.fill();
     text('ГРАФИК', 288, 160, 9, '#333', 'center', true, false);
     ctx.strokeStyle = '#c62828'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(264, 222); ctx.quadraticCurveTo(290, 200, 312, 172); ctx.stroke();
-    // ---- первичка и ХВС (тонкие)
-    const thin = (pts, c) => { ctx.strokeStyle = c; ctx.lineWidth = 7; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); pts.slice(1).forEach((p) => ctx.lineTo(p[0], p[1])); ctx.stroke(); };
-    thin([[345, CT.floor], [345, 122], [400, 122]], '#7a7f86');
-    thin([[365, CT.floor], [365, 200], [400, 200]], '#5e636a');
-    thin([[345, 342], [400, 342]], '#7a7f86');
-    thin([[365, 428], [400, 428]], '#5e636a');
-    text('сеть', 355, CT.floor - 10, 10, '#fff', 'center', true);
-    rr(366, 112, 22, 20, 3); ctx.fillStyle = '#2a5d9a'; ctx.fill(); text('РТ', 377, 122, 9, '#fff', 'center', true, false);
-    thin([[500, CT.floor], [500, CT.Y[4]]], '#4fb3d9');
-    text('ХВС', 512, 480, 11, '#bfefff', 'left', true);
-    thin([[640, CT.floor], [640, CT.Y[2]]], '#4fb3d9');
-    // ---- главные трубы
+    // ---- ввод теплосети от ТЭЦ (первичный контур)
     const H = s.heat, Wg = s.gvs;
+    const season = G.Sim.heatSeason(s.t);
+    const tRet = G.Sim.netReturn(s);
+    const NS = '#8e1b1b', NR = '#1b2f70';
+    const qh = season ? H.q : 0, qg = Wg.ps > 1 ? 0.6 : 0;
+    rect(CT.netS - 30, CT.floor, CT.netR - CT.netS + 60, 12, '#3a3936');
+    pipeSeg(CT.netS, CT.floor + 6, CT.netS, 300, NS, s.tnet, 11);
+    pipeSeg(CT.netS, 300, CT.netS, 100, NS, s.tnet, 11);
+    pipeSeg(CT.netS, 100, 516, 100, NS, s.tnet, 11);
+    pipeSeg(CT.netS, 300, 505, 300, NS, s.tnet, 9);
+    pipeSeg(505, 300, 505, 316, NS, s.tnet, 9);
+    pipeSeg(516, 220, CT.netR, 220, NR, tRet, 11);
+    pipeSeg(505, 456, 505, 478, NR, tRet, 9);
+    pipeSeg(505, 478, CT.netR, 478, NR, tRet, 9);
+    pipeSeg(CT.netR, 220, CT.netR, CT.floor + 6, NR, tRet, 11);
+    flowMarks([[CT.netS, CT.floor], [CT.netS, 100], [516, 100]], Math.max(qh, qg), 1);
+    flowMarks([[516, 220], [CT.netR, 220], [CT.netR, CT.floor]], qh, 1);
+    flowMarks([[CT.netS, 300], [505, 300], [505, 316]], qg, 1);
+    flowMarks([[505, 456], [505, 478], [CT.netR, 478]], qg, 1);
+    rr(458, 90, 26, 20, 3); ctx.fillStyle = '#2a5d9a'; ctx.fill(); text('РТ', 471, 100, 9, '#fff', 'center', true, false);
+    rr(430, 290, 26, 20, 3); ctx.fillStyle = '#2a5d9a'; ctx.fill(); text('РТ', 443, 300, 9, '#fff', 'center', true, false);
+    tag('подача ' + U.deg(s.tnet), CT.netS - 4, 200, NS, '#fff', 10);
+    tag('обратка ' + U.deg(tRet), CT.netR + 8, 256, NR, '#fff', 10);
+    tag('ВВОД ОТ ТЭЦ ↑', (CT.netS + CT.netR) / 2 + 10, 76, s.ev.netDrop ? '#b3261e' : '#222', '#ffd36b', 12);
+    addHit('net', CT.netS - 34, 84, CT.netR - CT.netS + 68, CT.floor - 70);
+    // ---- ХВС из водопровода: врезка в обратку ГВС (Т4) и подпитка отопления
+    const HC = '#3fa9d6';
+    ctx.strokeStyle = HC; ctx.lineWidth = 6; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(CT.hvsX, 492); ctx.lineTo(CT.feedX, 492); ctx.lineTo(CT.feedX, CT.Y[2]); ctx.stroke();
+    pipeSeg(CT.hvsX, CT.floor + 6, CT.hvsX, CT.Y[4], HC, 30, 9);
+    flowMarks([[CT.hvsX, CT.floor], [CT.hvsX, CT.Y[4]]], s.ev.hvs ? 0 : 0.5, 1);
+    rr(CT.hvsX - 10, 462, 20, 16, 3); ctx.fillStyle = '#e8e4da'; ctx.fill(); circle(CT.hvsX, 470, 5, '#1d4f91');
+    text('ХВС ↑', CT.hvsX - 14, 464, 11, s.ev.hvs ? '#ff8a80' : '#bfefff', 'right', true);
+    addHit('hvs', CT.hvsX - 16, 450, 70, 58);
+    // ---- главные трубы
     const tp = { 1: H.t1, 2: H.t2, 3: Wg.t3, 4: Wg.t4 };
-    for (let p = 1; p <= 4; p++) pipeSeg(470, CT.Y[p], 1300, CT.Y[p], D.PIPES[p].color, tp[p]);
-    pipeSeg(710, CT.Y[2], 710, CT.Y2b, D.PIPES[2].color, tp[2]); pipeSeg(710, CT.Y2b, 850, CT.Y2b, D.PIPES[2].color, tp[2]); pipeSeg(850, CT.Y2b, 850, CT.Y[2], D.PIPES[2].color, tp[2]);
-    pipeSeg(710, CT.Y[4], 710, CT.Y4b, D.PIPES[4].color, tp[4]); pipeSeg(710, CT.Y4b, 850, CT.Y4b, D.PIPES[4].color, tp[4]); pipeSeg(850, CT.Y4b, 850, CT.Y[4], D.PIPES[4].color, tp[4]);
+    for (let p = 1; p <= 4; p++) pipeSeg(CT.x0, CT.Y[p], CT.x1, CT.Y[p], D.PIPES[p].color, tp[p]);
+    pipeSeg(CT.br0, CT.Y[2], CT.br0, CT.Y2b, D.PIPES[2].color, tp[2]); pipeSeg(CT.br0, CT.Y2b, CT.br1, CT.Y2b, D.PIPES[2].color, tp[2]); pipeSeg(CT.br1, CT.Y2b, CT.br1, CT.Y[2], D.PIPES[2].color, tp[2]);
+    pipeSeg(CT.br0, CT.Y[4], CT.br0, CT.Y4b, D.PIPES[4].color, tp[4]); pipeSeg(CT.br0, CT.Y4b, CT.br1, CT.Y4b, D.PIPES[4].color, tp[4]); pipeSeg(CT.br1, CT.Y4b, CT.br1, CT.Y[4], D.PIPES[4].color, tp[4]);
+    circle(CT.hvsX, CT.Y[4], 8, HC);
     const gq = Wg.ps > 1 && G.Sim.pipeOpen(s, 3) ? Math.max(Wg.q, 0.35) : 0;
-    flowMarks([[470, CT.Y[1]], [1300, CT.Y[1]]], H.q, 1);
-    flowMarks([[1300, CT.Y[2]], [470, CT.Y[2]]], H.q, 1);
-    flowMarks([[470, CT.Y[3]], [1300, CT.Y[3]]], gq, 1);
-    flowMarks([[1300, CT.Y[4]], [470, CT.Y[4]]], Wg.q, 1);
-    for (let p = 1; p <= 4; p++) tag(D.PIPES[p].name, 498, CT.Y[p] - 16, D.PIPES[p].color, '#fff', 12);
+    flowMarks([[CT.x0, CT.Y[1]], [CT.x1, CT.Y[1]]], H.q, 1);
+    flowMarks([[CT.x1, CT.Y[2]], [CT.x0, CT.Y[2]]], H.q, 1);
+    flowMarks([[CT.x0, CT.Y[3]], [CT.x1, CT.Y[3]]], gq, 1);
+    flowMarks([[CT.x1, CT.Y[4]], [CT.x0, CT.Y[4]]], Wg.q, 1);
+    for (let p = 1; p <= 4; p++) tag(D.PIPES[p].name, CT.x0 + 22, CT.Y[p] - 16, D.PIPES[p].color, '#fff', 12);
+    text('← Н1/Н2 качают Т2', CT.br0 - 10, CT.Y2b + 2, 11, '#fff', 'right', true);
+    text('← Н3/Н4 качают Т4', CT.br0 - 10, CT.Y4b - 2, 11, '#fff', 'right', true);
     // грязевик
-    const fx = 960;
+    const fx = CT.fx;
     rr(fx - 18, CT.Y[2] + 4, 36, 80, 6); ctx.fillStyle = '#6d757e'; ctx.fill();
     rect(fx - 22, CT.Y[2] + 80, 44, 8, '#555b62');
     text('Грязевик', fx, CT.Y[2] + 100, 11, '#fff', 'center', true);
     addHit('filter', fx - 30, CT.Y[2] - 10, 60, 120);
-    // теплообменники
-    drawHX(400, 88, 232, 'ТО отопления', H.foul, 'hx:heat');
-    drawHX(400, 312, 456, 'ТО ГВС', Wg.foul, 'hx:gvs');
+    // теплообменник отопления (пластинчатый) и ВВП ГВС (секционный)
+    drawHX(520, 88, 232, 'ТО отопления', H.foul, 'hx:heat');
+    drawVVP(Wg, tp);
     // подпитка, дренажи
-    smallValve(640, 292, H.feed || (H.auto && H.autoOn), '', 'feed', true);
-    text(H.auto ? 'Подпитка (авто)' : 'Подпитка', 654, 292, 11, '#fff', 'left', true);
-    if (H.auto) { rr(626, 300, 28, 16, 3); ctx.fillStyle = '#c9a227'; ctx.fill(); text('РД', 640, 308, 9, '#222', 'center', true, false); }
-    ctx.strokeStyle = '#2b2f35'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(1100, 252); ctx.bezierCurveTo(1130, 300, 1120, 420, 1100, 500); ctx.stroke();
-    pipeSeg(1100, CT.Y[2], 1100, 248, D.PIPES[2].color, tp[2], 7);
-    smallValve(1100, 236, H.drain, 'Дренаж отопл.', 'drain:heat', true);
-    pipeSeg(1100, CT.Y[4], 1100, 488, D.PIPES[4].color, tp[4], 7);
-    smallValve(1100, 474, Wg.drain, 'Дренаж ГВС', 'drain:gvs', true);
-    rect(1085, 500, 30, 6, '#222');
-    if (H.drain && H.ps > 0.05) drips(1100, 255, 6); if (Wg.drain && Wg.ps > 0.05) drips(1100, 492, 6);
+    smallValve(CT.feedX, 292, H.feed || (H.auto && H.autoOn), '', 'feed', true);
+    text(H.auto ? 'Подпитка (авто)' : 'Подпитка из ХВС', CT.feedX + 14, 292, 11, '#fff', 'left', true);
+    if (H.auto) { rr(CT.feedX - 14, 300, 28, 16, 3); ctx.fillStyle = '#c9a227'; ctx.fill(); text('РД', CT.feedX, 308, 9, '#222', 'center', true, false); }
+    const dx = CT.dx;
+    ctx.strokeStyle = '#2b2f35'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(dx, 252); ctx.bezierCurveTo(dx + 30, 300, dx + 20, 420, dx, 500); ctx.stroke();
+    pipeSeg(dx, CT.Y[2], dx, 248, D.PIPES[2].color, tp[2], 7);
+    smallValve(dx, 236, H.drain, 'Дренаж отопл.', 'drain:heat', true);
+    pipeSeg(dx, CT.Y[4], dx, 488, D.PIPES[4].color, tp[4], 7);
+    smallValve(dx, 474, Wg.drain, 'Дренаж ГВС', 'drain:gvs', true);
+    rect(dx - 15, 500, 30, 6, '#222');
+    if (H.drain && H.ps > 0.05) drips(dx, 255, 6); if (Wg.drain && Wg.ps > 0.05) drips(dx, 492, 6);
     // насосы и задвижки
     s.pumps.forEach((p, i) => drawPump(p, i, s));
     s.valves.forEach((v, i) => drawValve(v, i, s));
     // манометры
-    drawGauge(1, 1214, CT.Y[1] - 32, H.t1, H.p1);
-    drawGauge(2, 1214, CT.Y[2] - 32, H.t2, H.p2);
-    drawGauge(3, 1214, CT.Y[3] - 32, Wg.t3, Wg.p3);
-    drawGauge(4, 1214, CT.Y[4] - 32, Wg.t4, Wg.p4);
+    drawGauge(1, CT.gx, CT.Y[1] - 32, H.t1, H.p1);
+    drawGauge(2, CT.gx, CT.Y[2] - 32, H.t2, H.p2);
+    drawGauge(3, CT.gx, CT.Y[3] - 32, Wg.t3, Wg.p3);
+    drawGauge(4, CT.gx, CT.Y[4] - 32, Wg.t4, Wg.p4);
     // вода на полу
     if (s.flood > 1) {
       ctx.fillStyle = 'rgba(90,150,220,' + U.clamp(0.15 + s.flood / 200, 0, 0.55) + ')';
-      ctx.beginPath(); ctx.ellipse(800, CT.floor + 14, 80 + s.flood * 5, 6 + s.flood * 0.12, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(930, CT.floor + 14, 80 + s.flood * 5, 6 + s.flood * 0.12, 0, 0, Math.PI * 2); ctx.fill();
     }
     // плакат при ремонте и начальник
     if (s.ev.inspect && s.ev.inspect.at - s.t < 5) drawMan(200, CT.floor + 22, 1, 0, 1.4);

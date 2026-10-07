@@ -222,6 +222,9 @@ G.Sim = (() => {
     P.mood = U.clamp(P.mood, 0, 100);
   }
 
+  // температура обратной сетевой воды, уходящей на ТЭЦ
+  const netReturn = (S) => (heatSeason(S.t) && S.heat.q > 0.05 ? Math.min(S.tnet - 10, S.heat.t2 + 6) : 42);
+
   // один шаг = одна игровая минута
   function step(S, busy) {
     S.t += 1;
@@ -243,6 +246,6 @@ G.Sim = (() => {
     G.Ev.tick(S, season);
   }
 
-  return { step, seasonal, heatSeason, tSched, drawProfile, pumpEff, headOf, pipeOpen, leakOf, sealLeak,
+  return { step, netReturn, seasonal, heatSeason, tSched, drawProfile, pumpEff, headOf, pipeOpen, leakOf, sealLeak,
     valveLeak, flangeLeak, circPumps, anyOn, GLAND };
 })();

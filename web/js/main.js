@@ -162,11 +162,11 @@ G.Main = (() => {
       return;
     }
     if (s.scene === 'ctp') {
-      P.ctpTo = U.clamp(l.x + R.cam.ctp, 60, 1250);
+      P.ctpTo = U.clamp(l.x + R.cam.ctp, 60, R.CT.W - 80);
       const map = {
         door: () => exit(), valve: () => UI.panelValve(n), pump: () => UI.panelPump(n), hx: () => UI.panelHX(a), filter: () => UI.panelFilter(),
         drain: () => UI.panelDrain(a), feed: () => UI.panelFeed(), gauge: () => UI.panelGauge(n), cabinet: () => UI.panelCabinet(),
-        desk: () => UI.panelDesk(), box: () => UI.panelBox(),
+        desk: () => UI.panelDesk(), box: () => UI.panelBox(), net: () => UI.panelNet(), hvs: () => UI.panelHvs(),
       };
       if (map[kind]) map[kind]();
       return;

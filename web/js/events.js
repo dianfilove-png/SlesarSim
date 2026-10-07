@@ -253,7 +253,7 @@ G.Ev = (() => {
       } else if (x.k === 'clog') {
         if (!openTask('cleanFilter')) o = { type: 'cleanFilter', title: 'Почистить грязевик', desc: 'Перепад на грязевике большой — забит. Почистить (контур нужно остановить и сдренировать).', deadline: s.t + 5 * 1440 };
       } else if (x.k === 'foul') {
-        if (!openTask('flush')) o = { type: 'flush', circ: x.c, title: 'Промыть ТО ' + (x.c === 'heat' ? 'отопления' : 'ГВС'), desc: 'Теплообменник зарос, не держит температуру. Промыть реагентом.', deadline: s.t + 7 * 1440 };
+        if (!openTask('flush')) o = { type: 'flush', circ: x.c, title: 'Промыть ' + (x.c === 'heat' ? 'ТО отопления' : 'ВВП ГВС'), desc: (x.c === 'heat' ? 'Теплообменник' : 'Подогреватель ГВС') + ' зарос, не держит температуру. Промыть реагентом.', deadline: s.t + 7 * 1440 };
       }
       if (o) { addTask(o); made++; msg(BOSS, 'Прочитал журнал. ' + o.desc); }
     }
