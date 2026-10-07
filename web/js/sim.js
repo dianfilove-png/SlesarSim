@@ -68,11 +68,11 @@ G.Sim = (() => {
     if (H.drain) dps -= H.ps * 0.18 + 0.02;
     if (H.auto) { if (H.ps < 3.8) H.autoOn = true; else if (H.ps > 4.2) H.autoOn = false; }
     const feeding = (H.feed || (H.auto && H.autoOn)) && !S.ev.hvs;
-    if (feeding) dps += 0.12;
+    if (feeding) dps += 0.06;
     H.ps = U.clamp(H.ps + dps, 0, 9);
 
     const sched = tSched(S.tout) + H.corr;
-    const maxT = S.tnet - 4 - H.foul * 0.5;
+    const maxT = S.tnet - 4 - H.foul * 0.25;
     const flowing = H.q > 0.05;
     const goal = season && flowing ? Math.min(sched, maxT) : 22;
     const k = flowing ? 0.06 : 0.008;

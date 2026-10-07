@@ -13,7 +13,7 @@ G.Ev = (() => {
     leak: [20, 2], meter: [8, 1], job: [10, 0], pumpFix: [40, 3], restart: [10, 1], burst: [30, 3],
     bearings: [35, 3], pumpSeal: [30, 3],
   };
-  const FAIL = { heat: 4, overheat: 2, hot: 4, air: 2, leak: 3, meter: 2, job: 0, obhod: 0, restart: 3, burst: 6 };
+  const FAIL = { heat: 4, overheat: 2, hot: 4, air: 2, leak: 3, meter: 2, job: 0, obhod: 0, restart: 3, burst: 6, switchPumps: 2, lube: 3 };
   const EMERGENCY = ['heat', 'hot', 'pumpFix', 'restart', 'burst', 'leak'];
 
   const sustained = (k, ok) => {
@@ -33,7 +33,7 @@ G.Ev = (() => {
     flush: (k, s) => s[k.circ].flushedAt >= k.created,
     heat: (k, s) => sustained(k, s.houses[k.ref].tin >= 19.5),
     overheat: (k, s) => sustained(k, s.houses[k.ref].tin <= 25),
-    hot: (k, s) => sustained(k, s.houses[k.ref].ttap >= 55),
+    hot: (k, s) => sustained(k, s.houses[k.ref].ttap >= 53),
     air: (k, s) => s.houses[k.ref].air === 0,
     leak: (k, s) => s.houses[k.ref].leak === 0,
     meter: (k) => !!k.doneFlag,
@@ -95,7 +95,7 @@ G.Ev = (() => {
     let money = k.money || 0;
     const h = U.hour(s.t);
     if ((h < 6 || h >= 22) && EMERGENCY.includes(k.type)) money += 700;
-    if (money) { s.p.money += money; s.stats.earned += money; }
+    if (money) { s.p.money += money; s.stats.earned += money; s.stats.earnBy = s.stats.earnBy || {}; s.stats.earnBy[k.type] = (s.stats.earnBy[k.type] || 0) + money; }
     mood(2);
     s.stats.tasksDone++;
     G.UI && G.UI.toast('✔ ' + k.title + ' — выполнено (+' + k.xp + ' опыта' + (money ? ', +' + U.money(money) : '') + ')', 'good');
@@ -107,6 +107,8 @@ G.Ev = (() => {
     if (pen) trust(-pen);
     mood(-4);
     s.stats.tasksFailed++;
+    s.stats.failBy = s.stats.failBy || {};
+    s.stats.failBy[k.type] = (s.stats.failBy[k.type] || 0) + 1;
     if (k.type === 'job') msg(k.who || 'Жилец', 'Ну и не надо, другого мастера найду.');
     else if (pen) msg(BOSS, 'Заявка «' + k.title + '» просрочена. Жильцы жалуются в управляющую компанию, мне выговор!');
     if (k.type === 'burst' && s.ev.burst && s.ev.burst.called === null) {
@@ -193,6 +195,7 @@ G.Ev = (() => {
     const sal = D.RANKS[rankIdx()].salary;
     let sum, text;
     if (dd === 20) { sum = Math.round(sal * 0.4); text = 'Аванс: ' + U.money(sum) + '.'; }
+    else if (U.day(s.t) < 10) return;
     else {
       const prem = P.trust >= 75 ? 0.25 : P.trust >= 55 ? 0.12 : 0;
       const ps = Math.round(sal * prem);
@@ -372,7 +375,7 @@ G.Ev = (() => {
       E.inspect = { at: t + 60 };
       msg(BOSS, 'Через час заеду на ЦТП с проверкой. Чтоб всё блестело и журнал был заполнен!', true);
     }
-    if (m >= 9 * 60 && m <= 20 * 60 && per(0.45, 660) && s.tasks.filter((k) => k.type === 'job' && !k.done && !k.failed).length < 2) {
+    if (m >= 9 * 60 && m <= 20 * 60 && per(0.3, 660) && s.tasks.filter((k) => k.type === 'job' && !k.done && !k.failed).length < 2) {
       const i = U.rint(0, 4), hd = D.HOUSES[i], job = U.pick(D.JOBS);
       const pay = Math.round(U.rnd(job.pay[0], job.pay[1]) / 100) * 100;
       const who = U.pick(D.NAMES);

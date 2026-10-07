@@ -265,8 +265,8 @@ G.Act = (() => {
         if (p.seal >= 75) f.push({ k: 'seal', i });
       });
       if (s.heat.clog >= 60) f.push({ k: 'clog' });
-      if (s.heat.foul >= 70) f.push({ k: 'foul', c: 'heat' });
-      if (s.gvs.foul >= 70) f.push({ k: 'foul', c: 'gvs' });
+      if (s.heat.foul >= 60) f.push({ k: 'foul', c: 'heat' });
+      if (s.gvs.foul >= 62) f.push({ k: 'foul', c: 'gvs' });
       if (s.flood > 20) f.push({ k: 'flood' });
       const H = s.heat, W = s.gvs;
       const text = 'Т1 ' + U.deg(H.t1) + '/' + H.p1.toFixed(1) + ' бар; Т2 ' + U.deg(H.t2) + '/' + H.p2.toFixed(1) +

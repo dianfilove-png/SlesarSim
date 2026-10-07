@@ -39,7 +39,7 @@ def main():
         page.on('pageerror', lambda e: errs.append(str(e)))
         page.goto(URL)
         page.wait_for_timeout(300)
-        page.evaluate("G.Main.startNew(); G.UI.closeOverlay(); G.UI.toast=()=>{}; G.UI.onMessage=()=>{}; G.S.speed=0;")
+        page.evaluate("G.Main.startNew(); G.UI.closeOverlay(); G.UI.toast=()=>{}; G.S.speed=0; window.cnt={}; G.UI.onMessage=(f,t)=>{ const k=f.split(',')[0]+': '+t.slice(0,50); cnt[k]=(cnt[k]||0)+1; }; 0")
         mins = []
         for d in range(days):
             lo = 99
@@ -55,6 +55,12 @@ def main():
             if page.evaluate("!!G.S.over"):
                 print('GAME OVER at day', d)
                 break
+        print(page.evaluate("""(() => { const s=G.S, f={}, d={}; s.tasks.forEach(k=>{ if(k.failed) f[k.type]=(f[k.type]||0)+1; if(k.done) d[k.type]=(d[k.type]||0)+1; });
+          return {failedRecent:f, doneRecent:d, stats:s.stats, money:s.p.money, xp:s.p.xp, rank:G.Ev.rankIdx()+3}; })()"""))
+        if os.environ.get('MSGS'):
+            for k, v in sorted(page.evaluate("cnt").items(), key=lambda x: -x[1]):
+                if os.environ.get('MSGS') not in k and os.environ.get('MSGS') != '1': continue
+                print(v, k)
         print('errors:', errs)
         b.close()
 
