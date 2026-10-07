@@ -70,7 +70,6 @@ G.UI = (() => {
     const box = $('toasts');
     const t = h('div', 'toast ' + (cls || ''));
     if (html) t.innerHTML = html; else t.textContent = text;
-    t.onclick = () => { t.remove(); if (cls === 'msg') phone('msgs'); };
     box.appendChild(t);
     while (box.children.length > 3) box.firstChild.remove();
     setTimeout(() => t.remove(), ms || 4500);
@@ -141,6 +140,7 @@ G.UI = (() => {
     api.dirty = false;
     const bar = $('actbar');
     bar.innerHTML = '';
+    zonebar();
     if (G.busy) return;
     const add = (l, f, main) => { const b = h('button', main ? 'main' : '', esc(l)); b.onclick = () => { G.Snd.unlock(); G.Snd.play('click'); f(); }; bar.appendChild(b); };
     const M = G.Main;
@@ -165,9 +165,87 @@ G.UI = (() => {
       add('На улицу', () => M.exit());
     }
   }
+  // ---------- зоны ЦТП и список оборудования
+  const ZONES = [['Пост', 180], ['Ввод·ТО', 470], ['Насосы', 910], ['Выход', 1290]];
+  function zonebar() {
+    const z = $('zonebar');
+    z.innerHTML = '';
+    const on = G.S.scene === 'ctp' && !G.busy;
+    z.classList.toggle('hidden', !on);
+    if (!on) return;
+    ZONES.forEach(([l, x]) => {
+      const b = h('button', '', esc(l));
+      b.dataset.x = x;
+      b.onclick = () => { G.Snd.play('click'); G.R.focusCtp(x); };
+      z.appendChild(b);
+    });
+    const L = h('button', 'list', '≡');
+    L.setAttribute('aria-label', 'Всё оборудование');
+    L.onclick = () => { G.Snd.play('click'); panelEquip(); };
+    z.appendChild(L);
+  }
+  function zoneHighlight() {
+    if (!G.S || G.S.scene !== 'ctp') return;
+    const c = G.R.cam.ctp + G.R.LW / 2;
+    let best = null, bd = 1e9;
+    [...$('zonebar').children].forEach((b) => { if (!b.dataset.x) return; const d = Math.abs(Number(b.dataset.x) - c); if (d < bd) { bd = d; best = b; } });
+    [...$('zonebar').children].forEach((b) => b.classList.toggle('on', b === best));
+  }
+  function openObj(id) {
+    const [x] = G.R.objPos(id);
+    G.R.focusCtp(x, 0.22);
+    G.Main.P.ctpTo = U.clamp(x, 60, G.R.CT.W - 80);
+    const [k, a] = id.split(':');
+    const n = Number(a);
+    const map = { pump: () => panelPump(n), valve: () => panelValve(n), feed: panelFeed, drain: () => panelDrain(a), filter: panelFilter,
+      hx: () => panelHX(a), net: panelNet, hvs: panelHvs, gauge: () => panelGauge(n), cabinet: panelCabinet, desk: panelDesk, box: panelBox };
+    map[k]();
+  }
+  function panelEquip() {
+    const s = G.S;
+    panel('Оборудование ЦТП', (b) => {
+      const H = s.heat, W = s.gvs;
+      kv(b, 'Отопление', H.ps.toFixed(1) + ' бар · Т1 ' + U.deg(H.t1) + ' · расход ' + Math.round(H.q * 100) + '%', H.q > 0.5 ? 'ok' : G.Sim.heatSeason(s.t) ? 'bad' : 'warn');
+      kv(b, 'ГВС', W.ps.toFixed(1) + ' бар · Т3 ' + U.deg(W.t3) + ' · циркуляция ' + (W.q > 0.3 ? 'есть' : 'нет'), W.q > 0.3 && W.ps > 1 ? 'ok' : 'bad');
+      const nbad = checklist('heat').concat(checklist('gvs')).filter((x) => !x.ok).length;
+      btn(b, 'Чек-лист пуска (шкаф)' + (nbad ? ' — не готово: ' + nbad : ' — всё ✔'), () => openObj('cabinet'), { cls: nbad ? 'warn' : '' });
+      const grid = (title, items) => {
+        sect(b, title);
+        const g = h('div', 'eq');
+        items.forEach(([id, label, st]) => {
+          const e = h('button', 'btn ' + (st === 'bad' ? 'bad' : st === 'ok' ? 'okb' : ''), esc(label));
+          e.onclick = () => { G.Snd.play('click'); openObj(id); };
+          g.appendChild(e);
+        });
+        b.appendChild(g);
+      };
+      grid('Насосы', s.pumps.map((p, i) => {
+        const bad = p.broken || p.seal >= 75 || (p.on && p.bear >= 75);
+        return ['pump:' + i, p.id + ' · ' + (p.circ === 'heat' ? 'отопл.' : 'ГВС') + ' · ' + (p.broken ? 'АВАРИЯ' : p.on ? 'работает' : 'стоит') +
+          (p.seal >= 75 ? ' · течь' : '') + (p.on && p.bear >= 75 ? ' · шум' : ''), bad ? 'bad' : p.on ? 'ok' : ''];
+      }));
+      grid('Задвижки', s.valves.map((v, i) => {
+        const bad = v.gland || v.flange || v.stuck || v.broken;
+        return ['valve:' + i, v.id + ' · ' + D.PIPES[v.pipe].name + ' · ' + (v.open ? 'откр.' : 'ЗАКР.') + (v.gland || v.flange ? ' · течь' : '') + (v.stuck || v.broken ? ' · клин' : ''), bad ? 'bad' : v.open ? 'ok' : ''];
+      }));
+      grid('Прочее', [
+        ['feed', 'Подпитка · ' + (H.feed ? 'ОТКРЫТА' : 'закрыта'), H.feed ? 'bad' : ''],
+        ['drain:heat', 'Дренаж отопл. · ' + (H.drain ? 'ОТКРЫТ' : 'закрыт'), H.drain ? 'bad' : ''],
+        ['drain:gvs', 'Дренаж ГВС · ' + (W.drain ? 'ОТКРЫТ' : 'закрыт'), W.drain ? 'bad' : ''],
+        ['filter', 'Грязевик · ' + (H.clog < 30 ? 'чистый' : H.clog < 60 ? 'шлам' : 'забит'), H.clog >= 60 ? 'bad' : ''],
+        ['hx:heat', 'ТО отопления', H.foul >= 60 ? 'bad' : ''],
+        ['hx:gvs', 'ВВП ГВС', W.foul >= 62 ? 'bad' : ''],
+        ['net', 'Ввод от ТЭЦ · ' + U.deg(s.tnet), s.ev.netDrop ? 'bad' : ''],
+        ['hvs', 'Ввод ХВС', s.ev.hvs ? 'bad' : ''],
+        ['desk', 'Стол и журнал', ''],
+        ['box', 'Ящик ЗИП', ''],
+      ]);
+    }, true);
+  }
+
   function tick(dt) {
     hudAcc += dt;
-    if (hudAcc > 0.2) { hudAcc = 0; hud(); }
+    if (hudAcc > 0.2) { hudAcc = 0; hud(); zoneHighlight(); if (G.Tut) G.Tut.tick(); }
     liveAcc += dt;
     if (liveAcc > 0.8) {
       liveAcc = 0;
@@ -309,6 +387,7 @@ G.UI = (() => {
       if (H.feed && H.ps >= Sm.P_CLOSE) kv(b, 'Давление набрано', 'закрой подпитку!', 'bad');
       if (H.auto) kv(b, 'Регулятор РД-3М', H.autoOn ? 'подпитывает' : 'держит 3.8–4.2 бар', 'ok');
       btn(b, H.feed ? 'Закрыть подпитку' : 'Открыть подпитку', () => A().feed(), { cls: 'main', sub: dur(1) + ' · около +0.06 бар/мин' });
+      pressBtn(b);
       if (!H.auto) btn(b, 'Установить регулятор подпитки', () => A().installReg(), { cls: inv('regulator') ? '' : 'warn', sub: inv('regulator') ? 'около ' + dur(75) : 'Нужен регулятор РД-3М (склад, с 4-го разряда)' });
       if (H.feed) para(b, s.speed ? 'Пока панель открыта, время идёт — манометр растёт на глазах.' : 'Игра на паузе (❚❚) — нажми ×1 или ×5, иначе давление не растёт.', true);
     }, true);
@@ -353,8 +432,18 @@ G.UI = (() => {
   }
   function panelCabinet() {
     const s = G.S;
+    if (G.Tut) G.Tut.flag('cabinet');
     panel('Шкаф управления ЩУ', (b) => {
       kv(b, 'Электропитание', s.ev.power ? 'НЕТ НАПРЯЖЕНИЯ' : 'есть', s.ev.power ? 'bad' : 'ok');
+      if (!G.Sim.heatSeason(s.t)) {
+        sect(b, 'Летние работы');
+        const ok = (s.heat.pressOkAt || -1) > (s.flags.summerFrom || 0);
+        kv(b, 'Акт опрессовки', ok ? 'подписан' : 'нет', ok ? 'ok' : 'warn');
+        const iss = G.Ev.readinessIssues(s);
+        kv(b, 'Готовность к зиме', iss.length ? 'замечаний: ' + iss.length : 'всё готово', iss.length ? 'warn' : 'ok');
+        iss.slice(0, 6).forEach((x) => para(b, '• ' + x, true));
+        pressBtn(b);
+      }
       sect(b, 'Пуск отопления — по порядку');
       drawChecklist(b, 'heat');
       sect(b, 'Пуск ГВС — по порядку');
@@ -379,6 +468,24 @@ G.UI = (() => {
       btn(r2, '−1°', () => A().gvsSet(-1)); btn(r2, '+1°', () => A().gvsSet(1));
       b.appendChild(r2);
     }, true);
+  }
+
+  function pressBtn(b) {
+    if (G.Sim.heatSeason(G.S.t)) return;
+    const r = A().pressReasons();
+    btn(b, 'Опрессовка отопления (гидроиспытания)', () => A().pressTest(), { cls: r.length ? 'warn' : 'main', sub: reqSub(r, '7,5 бар, 10 минут · около ' + dur(48)) });
+  }
+  function pressReport(ok, drop, defects) {
+    panel('Гидравлические испытания', (b) => {
+      kv(b, 'Давление испытания', '7,5 бар (1,25 рабочего)');
+      kv(b, 'Падение за 10 минут', drop.toFixed(2) + ' бар', drop <= 0.2 ? 'ok' : 'bad');
+      kv(b, 'Результат', ok ? 'ВЫДЕРЖАЛА — акт подписан' : 'НЕ ВЫДЕРЖАЛА', ok ? 'ok' : 'bad');
+      if (!ok) {
+        sect(b, 'Дефекты');
+        defects.forEach((x) => para(b, '• ' + x));
+        para(b, 'Устрани течи (сальники, прокладки, уплотнения, старые задвижки) и повтори испытания.', true);
+      }
+    });
   }
 
   // ---------- чек-лист пуска контура (что мешает воде пойти)
@@ -578,6 +685,7 @@ G.UI = (() => {
     tab = tab || 'tasks';
     const s = G.S;
     if (!s) return;
+    if (G.Tut) { G.Tut.flag('phone'); if (tab === 'sklad') G.Tut.flag('sklad'); }
     panel('Телефон', (b) => {
       const tabs = h('div', 'tabs');
       const unread = s.msgs.filter((m) => !m.read).length;
@@ -655,6 +763,11 @@ G.UI = (() => {
     kv(b, 'Заработано', U.money(s.stats.earned));
     if (s.stats.shocks) kv(b, 'Ударов током', String(s.stats.shocks), 'bad');
     if (s.ev.burst && s.ev.burst.called === null) btn(b, 'Позвонить в аварийную службу (порыв)', () => A().callBrigade(), { cls: 'danger' });
+    const d = U.date(s.t);
+    if ((d.m === 5 || d.m === 6 || (d.m === 7 && d.d <= 15)) && P.vacYear !== d.y) {
+      sect(b, 'Отпуск');
+      btn(b, 'Уйти в отпуск на 2 недели', () => A().vacation(), { sub: 'Отпускные ' + U.money(D.RANKS[ri].salary * 0.45) + ' · настроение +40 · на ЦТП подменит Михалыч' });
+    }
   }
 
   function obhodReport(list) {
@@ -699,6 +812,7 @@ G.UI = (() => {
       '<p><b>Насосы</b> работают парами: рабочий и резервный. Смазывай подшипники, меняй уплотнения, следи за шумом. При ремонте по техкарте сначала обесточь — иначе удар током.</p>' +
       '<p><b>Квартал.</b> Над домами — температура в квартирах и горячей воды. Если холодно — жильцы звонят. Регулятор в шкафу управления позволяет поднять или опустить график.</p>' +
       '<p><b>Жизнь.</b> Ешь, спи, отдыхай. Зарплата 5-го и 20-го. Запчасти бесплатно со склада (через телефон, к утру) или сразу в магазине за свои. Шабашки у жильцов — подработка.</p>' +
+      '<p><b>Лето</b> (после 15 мая): ремонтная кампания по плану начальника — опрессовка отопления, ревизия насосов, грязевик. В июне теплосеть отключает горячую воду на 10 дней. Можно взять отпуск (Телефон → Я). 1 сентября — комиссия по готовности, 1 октября — пуск отопления.</p>' +
       '<p><b>Цель</b> — продержаться до конца отопительного сезона 15 мая и не лишиться доверия начальства. Время: кнопки ❚❚ / ×1 / ×5 / ×20.</p>' +
       '<div id="h-ok"></div></div>');
     btn(o.querySelector('#h-ok'), 'Понятно', () => (G.S ? closeOverlay() : menu()), { cls: 'main' });
@@ -734,7 +848,7 @@ G.UI = (() => {
   };
   function hint(scene) {
     const s = G.S;
-    if (s.flags.hints[scene]) return;
+    if (s.flags.hints[scene] || (G.Tut && G.Tut.active())) return;
     s.flags.hints[scene] = true;
     toast(HINTS[scene], '', null, 9000);
   }
@@ -750,6 +864,6 @@ G.UI = (() => {
   }
 
   return Object.assign(api, { init, hud, tick, toast, onMessage, say, flash, ring, panel, reopen, closePanel, hidePanelForBusy, isModal,
-    panelOpen, overlayOpen, closeOverlay, panelPump, panelValve, panelHX, panelNet, panelHvs, panelFilter, panelDrain, panelFeed, panelGauge, panelCabinet,
+    panelOpen, overlayOpen, closeOverlay, panelPump, panelValve, panelHX, panelNet, panelHvs, panelEquip, openObj, checklist, pressReport, panelFilter, panelDrain, panelFeed, panelGauge, panelCabinet,
     panelDesk, panelBox, panelHome, panelHouse, panelBasement, panelShop, phone, obhodReport, menu, help, intro, victory, gameOver, hint });
 })();

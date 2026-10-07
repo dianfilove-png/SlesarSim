@@ -11,8 +11,57 @@ G.Ev = (() => {
     obhod: [10, 1], lube: [15, 2], replaceValve: [60, 5], fixGland: [20, 2], switchPumps: [15, 2],
     cleanFilter: [40, 3], flush: [60, 4], heat: [15, 2], overheat: [12, 1], hot: [15, 2], air: [15, 1],
     leak: [20, 2], meter: [8, 1], job: [10, 0], pumpFix: [40, 3], restart: [10, 1], burst: [30, 3],
-    bearings: [35, 3], pumpSeal: [30, 3],
+    bearings: [35, 3], pumpSeal: [30, 3], heatOff: [5, 1], pressTest: [50, 4], pumpRev: [35, 3], readiness: [30, 4], heatStart: [30, 3],
   };
+  // ---------- лето: готовность к сезону
+  function readinessIssues(s) {
+    const r = [];
+    if (!((s.heat.pressOkAt || -1) > (s.flags.summerFrom || 0))) r.push('нет акта гидравлических испытаний (опрессовки)');
+    s.valves.filter((v) => v.pipe <= 2).forEach((v) => {
+      if (v.broken || v.cond < 40) r.push('задвижка ' + v.id + ' изношена — менять');
+      else if (v.gland || v.flange) r.push('течь на задвижке ' + v.id);
+    });
+    s.pumps.filter((p) => p.circ === 'heat').forEach((p) => {
+      if (p.broken || p.bear >= 60) r.push('насос ' + p.id + ': подшипники');
+      if (p.seal >= 70) r.push('насос ' + p.id + ': уплотнение');
+    });
+    if (s.heat.clog >= 40) r.push('грязевик не почищен');
+    if (s.heat.foul >= 50) r.push('ТО отопления не промыт');
+    return r;
+  }
+  // абсолютное время ближайшей даты (месяц 0..11, число, час)
+  function tOf(s, month, day, hour) {
+    let dd = U.day(s.t);
+    for (let i = 0; i < 400; i++, dd++) { const x = U.date(dd * 1440); if (x.m === month && x.d === day) return dd * 1440 + hour * 60; }
+    return s.t + 30 * 1440;
+  }
+  function summerPlan(s) {
+    const dl = tOf(s, 7, 31, 18);
+    const made = [];
+    const add = (o) => { addTask(Object.assign({ deadline: dl }, o)); made.push(o.title); };
+    add({ type: 'pressTest', title: 'Опрессовка отопления', desc: 'Гидравлические испытания системы отопления на 7,5 бар. Кнопка — в шкафу или у подпитки (насосы стоят, задвижки открыты, система заполнена).' });
+    [0, 1].forEach((i) => add({ type: 'pumpRev', ref: i, title: 'Ревизия насоса ' + s.pumps[i].id, desc: 'Заменить подшипники или уплотнение насоса ' + s.pumps[i].id + ' — перебрать перед зимой.' }));
+    if (!openTask('cleanFilter')) add({ type: 'cleanFilter', title: 'Почистить грязевик', desc: 'Перед сезоном грязевик должен быть чистым.' });
+    if (s.heat.foul >= 35 && !openTask('flush')) add({ type: 'flush', circ: 'heat', title: 'Промыть ТО отопления', desc: 'Промыть пластинчатый теплообменник отопления реагентом.' });
+    // задвижки, которые к 1 сентября износятся ниже нормы комиссии (40%)
+    s.valves.filter((v) => v.pipe <= 2 && (v.cond < 60 || v.broken)).forEach((v) => {
+      const i = s.valves.indexOf(v);
+      if (!openTask('replaceValve', i)) add({ type: 'replaceValve', ref: i, title: 'Заменить задвижку ' + v.id, desc: 'Задвижка ' + v.id + ' изношена (' + Math.round(v.cond) + '%) — заменить летом, пока отопление стоит. Склад — не больше лимита в месяц.' });
+    });
+    msg(BOSS, 'План летнего ремонта до 31 августа: ' + made.join('; ') + '. Первого сентября — комиссия по готовности к зиме!', true);
+  }
+  function commission(s) {
+    const r = readinessIssues(s);
+    if (!r.length) {
+      s.p.money += 10000; s.stats.earned += 10000; trust(6); mood(10);
+      msg('Комиссия по готовности', 'Паспорт готовности ЦТП-7 к отопительному сезону подписан! Премия 10 000 ₽.', true);
+    } else {
+      trust(-6); mood(-6);
+      msg('Комиссия по готовности', 'Паспорт не подписан. Замечания: ' + r.join('; ') + '. Устранить до 20 сентября!', true);
+      if (!openTask('readiness')) addTask({ type: 'readiness', title: 'Устранить замечания комиссии', desc: r.join('; ') + '.', deadline: tOf(s, 8, 20, 18) });
+    }
+  }
+
   const FAIL = { heat: 4, overheat: 2, hot: 4, air: 2, leak: 3, meter: 2, job: 0, obhod: 0, restart: 3, burst: 6, switchPumps: 2, lube: 3 };
   const EMERGENCY = ['heat', 'hot', 'pumpFix', 'restart', 'burst', 'leak'];
 
@@ -41,6 +90,11 @@ G.Ev = (() => {
     pumpFix: (k, s) => !s.pumps[k.ref].broken,
     restart: (k, s) => (!G.Sim.heatSeason(s.t) || s.heat.q > 0.5) && s.gvs.q > 0.3,
     burst: (k, s) => !s.ev.burst || s.ev.burst.called !== null,
+    heatOff: (k, s) => !s.pumps.some((p) => p.circ === 'heat' && p.on),
+    pressTest: (k, s) => (s.heat.pressOkAt || -1) >= k.created,
+    pumpRev: (k, s) => (s.pumps[k.ref].serviced || -1) >= k.created,
+    readiness: (k, s) => readinessIssues(s).length === 0,
+    heatStart: (k, s) => s.heat.q > 0.5 && s.heat.t1 > 38,
   };
 
   function msg(from, text, urgent) {
@@ -283,6 +337,10 @@ G.Ev = (() => {
       if (!openTask('restart')) addTask({ type: 'restart', title: 'Запустить насосы после отключения', desc: 'После отключения света насосы сами не запускаются.', deadline: t + 120, excuse: false });
     }
     if (E.hvs && t >= E.hvs.until) { E.hvs = null; msg(ODS, 'Водоканал подал холодную воду, ГВС восстанавливается.'); }
+    if (E.netOff) {
+      if (!E.netOff.started && t >= E.netOff.from) { E.netOff.started = true; msg('Теплосеть', 'Начались испытания магистрали — горячей воды в квартале нет 10 дней. Жильцы в курсе.', true); }
+      if (t >= E.netOff.until) { E.netOff = null; msg('Теплосеть', 'Испытания окончены, сетевую воду дали. Проверь ГВС: насос, задвижки, температура.', true); }
+    }
     if (E.burst) {
       const B = E.burst;
       if (B.called !== null && !B.isolated && t >= B.called + 40) {
@@ -323,9 +381,21 @@ G.Ev = (() => {
         msg(BOSS, 'Двадцать третье — снимаем показания теплосчётчиков во всех домах. Три дня тебе.');
       }
       if (d.m === 8 && d.d === 25) msg(BOSS, 'Через неделю отопительный сезон. Проверь насосы и задвижки!');
-      if (d.m === 9 && d.d === 1 && d.y > 2026) { msg(BOSS, 'Приказ: начинаем отопительный сезон! Запускай отопление.', true); s.flags.seasonEnd = false; }
+      if (d.m === 9 && d.d === 1 && d.y > 2026) {
+        msg(BOSS, 'Приказ: начинаем отопительный сезон! Запускай отопление до вечера: задвижки, давление ~4 бар, насос. Чек-лист — в шкафу.', true);
+        s.flags.seasonEnd = false;
+        if (!openTask('heatStart')) addTask({ type: 'heatStart', title: 'Пуск отопления', desc: 'Запустить отопление квартала: открыть задвижки Т1/Т2, подпитать до ~4 бар, запустить Н1 или Н2.', deadline: t + 9 * 60 });
+        U.pick([[0, 2, 4], [1, 3], [0, 3, 4], [2, 4]]).forEach((i) => { s.houses[i].air = 1; });
+      }
+      if (d.m === 4 && d.d === 18 && s.flags.planYear !== d.y) { s.flags.planYear = d.y; summerPlan(s); }
+      if (d.m === 5 && d.d === 1 && !E.netOff) {
+        const from = t + U.rint(2, 19) * 1440;
+        E.netOff = { from, until: from + 10 * 1440, started: false };
+        msg('Теплосеть', 'Плановые гидравлические испытания магистрали: с ' + U.dateStr(from) + ' горячей воды не будет 10 дней. Лучшее время перебрать ВВП и насосы ГВС.');
+      }
     }
     if (m === 10 * 60 && (d.d === 5 || d.d === 20)) payday(d.d);
+    if (m === 10 * 60 && d.m === 8 && d.d === 1 && d.y > 2026) commission(s);
     if (m === 0) {
       let avg = 0;
       s.houses.forEach((h) => { avg += h.sat; });
@@ -337,8 +407,10 @@ G.Ev = (() => {
     }
     if (m === 12 * 60 && d.m === 4 && d.d === 15 && !s.flags.seasonEnd) {
       s.flags.seasonEnd = true;
+      s.flags.summerFrom = t;
       s.p.money += 15000;
-      msg(BOSS, 'Отопительный сезон закрыт! Держи премию 15 000 ₽. Насосы отопления можно останавливать — летом ремонты.', true);
+      msg(BOSS, 'Отопительный сезон закрыт! Держи премию 15 000 ₽. Останови насосы отопления — летом ремонтная кампания, план пришлю.', true);
+      if (!openTask('heatOff')) addTask({ type: 'heatOff', title: 'Остановить отопление', desc: 'Сезон закрыт: остановить насосы отопления Н1/Н2.', deadline: t + 2 * 1440 });
       G.UI && G.UI.victory();
     }
 
@@ -406,6 +478,6 @@ G.Ev = (() => {
     }
   }
 
-  return { msg, alarm, addTask, openTask, openTasks, xp, trust, mood, rankIdx, complaints, pumpBroke, blowout, passOut,
+  return { readinessIssues, msg, alarm, addTask, openTask, openTasks, xp, trust, mood, rankIdx, complaints, pumpBroke, blowout, passOut,
     hospital, startGame, tick, BOSS, ODS };
 })();

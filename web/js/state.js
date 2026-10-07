@@ -51,6 +51,7 @@ G.St = (() => {
       flags: { late: -1, obhodChecked: -1, seasonEnd: false, seasonStart: true, hints: {} },
       stats: { repairs: 0, tasksDone: 0, tasksFailed: 0, complaints: 0, earned: 0, shocks: 0 },
       nextId: 1,
+      tut: { step: 0, done: false, flags: {}, t2: 0 },
       over: null,
     };
     S.valves.forEach((v) => { v.open = true; v.stuck = false; v.lastOp = -20000; v.replacedAt = -1; });

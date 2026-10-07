@@ -137,7 +137,7 @@ G.Main = (() => {
     if (Math.abs(dx) > 10 || Math.abs(e.clientY - down.y) > 14) down.moved = true;
     if (!down.moved) return;
     if (G.S.scene === 'street') { R.cam.street = down.cam - dx; follow = false; }
-    else if (G.S.scene === 'ctp') R.cam.ctp = down.cam - dx;
+    else if (G.S.scene === 'ctp') { R.stopCam(); R.cam.ctp = down.cam - dx; }
   }
   function onUp(e) {
     const d = down;
@@ -182,6 +182,10 @@ G.Main = (() => {
 
   // ---------- цикл
   function loop(now) {
+    try { frameStep(now); } catch (e) { if (window.console) console.error(e); }
+    requestAnimationFrame(loop);
+  }
+  function frameStep(now) {
     const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
     last = now;
     const s = G.S;
@@ -217,7 +221,6 @@ G.Main = (() => {
     }
     if (started && G.S) R.frame(G.S, P, dt);
     G.UI.tick(dt);
-    requestAnimationFrame(loop);
   }
 
   function back() {

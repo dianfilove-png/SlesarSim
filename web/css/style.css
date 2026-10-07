@@ -45,7 +45,7 @@ button { font: inherit; color: inherit; touch-action: manipulation; }
 #toasts { position: fixed; top: 46px; left: max(8px, env(safe-area-inset-left)); width: min(400px, 40vw); z-index: 30;
   display: flex; flex-direction: column; gap: 5px; pointer-events: none; }
 .toast { background: #1d2633f2; border: 1px solid #3a4658; border-left: 4px solid #8fa3ba; border-radius: 8px;
-  padding: 4px 8px; font-size: 12px; line-height: 1.3; animation: tin .25s; pointer-events: auto; }
+  padding: 4px 8px; font-size: 12px; line-height: 1.3; animation: tin .25s; pointer-events: none; }
 .toast.good { border-left-color: #4caf50; }
 .toast.bad { border-left-color: #e53935; }
 .toast.msg { border-left-color: #f0a020; }
@@ -154,3 +154,26 @@ button { font: inherit; color: inherit; touch-action: manipulation; }
 .ov.text ul { padding-left: 18px; margin: 6px 0; }
 #flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 60; transition: opacity .4s; }
 #flash.on { opacity: .85; transition: none; }
+
+/* ---------- зоны ЦТП */
+#zonebar { position: fixed; right: max(8px, env(safe-area-inset-right)); bottom: 8px; display: flex; gap: 4px; z-index: 9; }
+#zonebar button { height: 38px; padding: 0 9px; border-radius: 9px; border: 1px solid #556277; background: #1c2430e8; font-weight: 600; font-size: 12.5px; }
+#zonebar button.on { border-color: #f0a020; color: #ffd36b; }
+#zonebar button.list { background: #2a3a52; font-size: 15px; }
+.eq { display: flex; gap: 6px; flex-wrap: wrap; }
+.eq .btn { width: calc(50% - 3px); margin: 3px 0; min-height: 36px; padding: 5px 9px; font-size: 13px; }
+.eq .btn.bad { border-color: #8a3a32; background: #3a1f1c; }
+.eq .btn.okb { border-color: #2e6b3a; }
+
+/* ---------- обучение */
+#tut { position: fixed; left: max(8px, env(safe-area-inset-left)); bottom: 54px; width: min(390px, 40vw); z-index: 26;
+  background: #23180aF2; border: 2px solid #f0a020; border-radius: 12px; padding: 8px 10px; box-shadow: 0 4px 18px #0009; }
+#tut.top { bottom: auto; top: 46px; }
+#tut .t-text { font-size: 13px; line-height: 1.35; }
+#tut .t-text b { color: #ffd36b; }
+#tut .t-btns { display: flex; gap: 6px; margin-top: 6px; justify-content: flex-end; }
+#tut .t-btns button { height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid #6b5530; background: #3a2a10; font-size: 12px; font-weight: 600; }
+#tut .t-btns button.main { background: #f0a020; color: #1a1205; border-color: #f0a020; }
+.tut-hl { outline: 3px solid #ffd36b !important; outline-offset: 2px; animation: tutp 0.9s infinite alternate; }
+@keyframes tutp { from { box-shadow: 0 0 0 0 #ffd36b88; } to { box-shadow: 0 0 0 7px #ffd36b00; } }
+body.tut-on #loc { display: none; }

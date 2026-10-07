@@ -5,6 +5,7 @@ G.R = (() => {
   const U = G.U, D = G.D;
   let cv, ctx, dpr = 1, scale = 1, LW = 960, LH = 540;
   const cam = { street: 900, ctp: 0 };
+  const camTo = { ctp: null };
   let hits = [];
   let anim = 0;
   let tx = 0, ty = 0; // мир -> экран (логические px)
@@ -467,10 +468,15 @@ G.R = (() => {
     ctx.restore();
     rect(x - 1.5, y - 16, 3, 9, '#999'); rect(x - 8, y - 18, 16, 3, open ? '#2e7d32' : '#b3261e');
     if (label) text(label, x - 14, y, 11, '#fff', 'right', true);
-    addHit(id, x - 24, y - 26, 60, 46);
+    addHit(id, x - 30, y - 32, 72, 58);
   }
   function drawCTP(s, P) {
     const W = CT.W;
+    if (camTo.ctp !== null && LW < W) {
+      const tgt = U.clamp(camTo.ctp, 0, W - LW);
+      cam.ctp += (tgt - cam.ctp) * 0.18;
+      if (Math.abs(tgt - cam.ctp) < 1.5) { cam.ctp = tgt; camTo.ctp = null; }
+    }
     const camX = cam.ctp = LW >= W ? -(LW - W) / 2 : U.clamp(cam.ctp, 0, W - LW);
     tx = -camX; ty = Math.max(0, (LH - 540) / 2);
     // фон
@@ -763,7 +769,43 @@ G.R = (() => {
       case 'house': drawBasement(s, P); break;
       default: break;
     }
+    const tg = G.Tut && G.Tut.worldTarget();
+    if (tg && tg.scene === s.scene) tutArrow(tg.x + tx, tg.y + ty);
   }
+  // стрелка обучения над объектом
+  function tutArrow(x, y) {
+    const b = Math.sin(anim * 6) * 7;
+    ctx.save();
+    ctx.translate(x, y - 18 + b);
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-16, -22); ctx.lineTo(-6, -22); ctx.lineTo(-6, -46); ctx.lineTo(6, -46); ctx.lineTo(6, -22); ctx.lineTo(16, -22); ctx.closePath();
+    ctx.fillStyle = '#ffd36b'; ctx.fill();
+    ctx.strokeStyle = '#3a2a08'; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(255,211,107,' + (0.5 + 0.4 * Math.sin(anim * 6)) + ')'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(x, y + 14, 30, 0, Math.PI * 2); ctx.stroke();
+  }
+  // координаты объектов ЦТП (мир) — для списка оборудования и обучения
+  function objPos(id) {
+    const [k, a] = id.split(':');
+    const n = Number(a);
+    switch (k) {
+      case 'pump': { const p = CT.pumpPos(n); return [p[0], p[1]]; }
+      case 'valve': { const v = G.S.valves[n]; return [CT.valveX(v), CT.Y[v.pipe] - 20]; }
+      case 'feed': return [CT.feedX, 292];
+      case 'drain': return [CT.dx, a === 'heat' ? 236 : 474];
+      case 'filter': return [CT.fx, CT.Y[2] + 40];
+      case 'hx': return a === 'heat' ? [555, 150] : [534, 385];
+      case 'net': return [400, 300];
+      case 'hvs': return [CT.hvsX, 470];
+      case 'gauge': return [CT.gx, CT.Y[n] - 32];
+      case 'cabinet': return [185, 230];
+      case 'desk': return [270, 440];
+      case 'box': return [160, 440];
+      default: return [700, 300];
+    }
+  }
+  function focusCtp(x, frac) { camTo.ctp = x - LW * (frac === undefined ? 0.5 : frac); }
+  function stopCam() { camTo.ctp = null; }
 
-  return { init, resize, frame, hitTest, toLogical, cam, CT, get LW() { return LW; }, get LH() { return LH; }, get scale() { return scale; }, hudH, drawMan };
+  return { init, resize, frame, hitTest, toLogical, cam, camTo, CT, objPos, focusCtp, stopCam, get LW() { return LW; }, get LH() { return LH; }, get scale() { return scale; }, hudH, drawMan };
 })();

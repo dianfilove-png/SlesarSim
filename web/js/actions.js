@@ -236,6 +236,59 @@ G.Act = (() => {
     });
   }
 
+  // ---------- лето: опрессовка и отпуск
+  function pressReasons() {
+    const s = G.S, H = s.heat, r = [];
+    if (Sim.heatSeason(s.t)) r.push('отопительный сезон — испытания только летом');
+    if (Sim.anyOn(s, 'heat')) r.push('остановить насосы отопления');
+    const cl = s.valves.filter((v) => v.pipe <= 2 && !v.open);
+    if (cl.length) r.push('открыть ' + cl.map((v) => v.id).join(', '));
+    if (H.drain) r.push('закрыть дренаж отопления');
+    if (H.ps < 3) r.push('заполнить систему подпиткой (сейчас ' + H.ps.toFixed(1) + ' бар)');
+    return r;
+  }
+  function pressTest() {
+    const r = pressReasons();
+    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
+    G.MG.proc('press', () => {
+      const s = G.S, defects = [];
+      s.valves.forEach((v) => {
+        if (v.pipe > 2) return;
+        if (v.gland) defects.push('течь по сальнику ' + v.id);
+        if (v.flange) defects.push('течь по фланцу ' + v.id);
+        else if (v.cond < 40 && Math.random() < 0.6) { v.flange = 1; defects.push('не выдержал фланец ' + v.id + ' — задвижка старая'); }
+      });
+      s.pumps.forEach((p) => { if (p.circ === 'heat' && p.seal >= 60) { p.seal = Math.max(p.seal, 76); defects.push('потекло уплотнение насоса ' + p.id); } });
+      s.houses.forEach((h, i) => { if (h.leak) defects.push('течь стояка в подвале ' + D.HOUSES[i].name.replace('Дом', 'дома')); });
+      const drop = 0.04 + defects.length * 0.18 + Math.random() * 0.04;
+      const ok = !defects.length;
+      if (ok) {
+        s.heat.pressOkAt = s.t;
+        s.stats.repairs++;
+        Ev.xp(40); Ev.mood(8);
+        Ev.msg(Ev.BOSS, 'Акт гидравлических испытаний подписан: 7,5 бар, падение ' + drop.toFixed(2) + ' бар за 10 минут. Молодец!');
+      } else { Ev.xp(10); Ev.mood(-4); }
+      s.heat.ps = 4.1;
+      G.UI.pressReport(ok, drop, defects);
+    });
+  }
+  function vacation() {
+    const s = G.S, d = U.date(s.t), P = s.p;
+    if (!(d.m === 5 || d.m === 6 || (d.m === 7 && d.d <= 15))) return toast('Отпуск дают летом: с 1 июня по 15 августа', 'bad');
+    if (P.vacYear === d.y) return toast('В этом году отпуск уже был', 'bad');
+    if (P.trust < 40) return toast('Петрович: «Какой отпуск? Сначала порядок наведи!»', 'bad');
+    const pay = Math.round(D.RANKS[Ev.rankIdx()].salary * 0.45);
+    P.vacYear = d.y;
+    P.money += pay; s.stats.earned += pay;
+    s.t += 14 * 1440;
+    for (const k of s.tasks) if (k.deadline) k.deadline += 14 * 1440;
+    if (s.ev.netOff) { s.ev.netOff.from += 14 * 1440; s.ev.netOff.until += 14 * 1440; }
+    P.energy = 100; P.hunger = 80; P.health = Math.min(100, P.health + 25);
+    Ev.mood(40);
+    G.Main.enter('home');
+    Ev.msg('Отпуск', 'Две недели на даче: рыбалка, баня, огород. Отдохнул! Отпускные: ' + U.money(pay) + '. На ЦТП подменял Михалыч.', true);
+  }
+
   // ---------- обход
   function findingText(x) {
     const s = G.S;
@@ -413,5 +466,5 @@ G.Act = (() => {
   return { inv, has, tool, dur, isoReasons, dryReasons, needItems, valveToggle, valveUnstick, valveTighten, valveRepack,
     valveReplace, valveRegasket, pumpStart, pumpStop, pumpLube, pumpBearings, pumpSeal, drain, feed, corr, gvsSet,
     cleanFilter, flush, installReg, obhod, eat, machineCoffee, sleep, tv, shower, read, fishing, bleedAir, clampLeak,
-    meter, job, callBrigade, talk, shopOpen, buy, order, circName, take };
+    meter, job, callBrigade, talk, shopOpen, buy, order, circName, take, pressReasons, pressTest, vacation };
 })();

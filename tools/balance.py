@@ -15,7 +15,13 @@ BOT = """
   s.scene = work ? 'ctp' : 'street';
   if (U.isWorkday(s.t) && h >= 9 && s.journal.lastObhod !== day) { s.journal.lastObhod = day; s.journal.lastObhodT = s.t; s.journal.findings = []; }
   const H = s.heat;
-  if (!s.ev.power) ['heat','gvs'].forEach(c => { if (!s.pumps.some(p => p.circ === c && p.on)) { const p = s.pumps.find(p => p.circ === c && !p.broken); if (p) p.on = true; } });
+  const season = G.Sim.heatSeason(s.t);
+  if (!s.ev.power) ['heat','gvs'].forEach(c => { if (c === 'heat' && !season) return; if (!s.pumps.some(p => p.circ === c && p.on)) { const p = s.pumps.find(p => p.circ === c && !p.broken); if (p) p.on = true; } });
+  if (!season) s.pumps.forEach(p => { if (p.circ === 'heat') p.on = false; });
+  s.tasks.forEach(k => { if (k.done || k.failed) return;
+    if (k.type === 'pressTest') s.heat.pressOkAt = s.t;
+    if (k.type === 'pumpRev') { s.pumps[k.ref].serviced = s.t; s.pumps[k.ref].bear = 5; }
+    if (k.type === 'replaceValve') { const v = s.valves[k.ref]; v.cond = 100; v.replacedAt = s.t; } });
   if (H.ps < 3.5) H.feed = true; if (H.ps > 4.3) H.feed = false;
   s.pumps.forEach(p => { if (p.lube < 30) p.lube = 100; if (p.bear > 65) { p.bear = 5; p.broken = false; } if (p.seal > 70) p.seal = 5; });
   s.valves.forEach(v => { v.gland = 0; v.flange = 0; v.stuck = false; v.open = true; });
