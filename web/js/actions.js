@@ -279,6 +279,7 @@ G.Act = (() => {
     if (!(d.m === 5 || d.m === 6 || (d.m === 7 && d.d <= 15))) return toast('Отпуск дают летом: с 1 июня по 15 августа', 'bad');
     if (P.vacYear === d.y) return toast('В этом году отпуск уже был', 'bad');
     if (P.trust < 40) return toast('Петрович: «Какой отпуск? Сначала порядок наведи!»', 'bad');
+    if (s.ev.burst) return toast('Какой отпуск — порыв у ' + D.HOUSES[s.ev.burst.house].name.replace('Дом', 'дома') + '!', 'bad');
     const pay = Math.round(D.RANKS[Ev.rankIdx()].salary * 0.45);
     P.vacYear = d.y;
     P.money += pay; s.stats.earned += pay;
@@ -461,14 +462,22 @@ G.Act = (() => {
       Ev.msg(Ev.ODS, 'Слесарь сам перекрыл ввод в камере ' + TK(i) + ' — молодец, оперативно!' + (B.called === null ? ' Бригаду-то вызвал?' : ''));
     }
   }
+  // порыв у дома не заварен — его контур в камере открывать нельзя: '' или причина
+  function wellLock(i, k) {
+    const B = G.S.ev.burst;
+    if (!B || B.house !== i || !D.WELL_PIPES[B.pipe].includes(k)) return '';
+    return 'Нельзя: на вводе порыв' + (B.arrived ? ' — бригада в котловане до ' + U.clock(B.fixAt) : ' — ждём аварийку');
+  }
   function wellToggle(i, k) {
     const s = G.S, v = s.wells[i].v[k];
     if (v.broken) return toast('Шпиндель сорван — эту задвижку заменят подрядчики', 'bad');
     if (v.stuck) return toast('Задвижка закисла и не проворачивается', 'bad');
+    if (!v.open && wellLock(i, k)) return toast(wellLock(i, k), 'bad');
     const closing = v.open;
     busy((closing ? 'Закрываю ' : 'Открываю ') + WPIPE[k] + ' в ' + TK(i) + ' — тесно, штурвал тугой…', 6, { work: 0.07 }, () => {
-      // пока крутил, задвижку могла перекрыть аварийка
+      // пока крутил, задвижку могла перекрыть аварийка или у дома прорвало
       if (v.open !== closing || v.broken || v.stuck) return toast(WPIPE[k] + ' уже ' + (v.open ? 'открыта' : 'закрыта'));
+      if (!closing && wellLock(i, k)) return toast(wellLock(i, k), 'bad');
       if (Math.random() < wellStickP(v)) {
         v.stuck = true;
         toast('Задвижка ' + WPIPE[k] + ' закисла — штурвал ни в какую! Нужна WD-40.', 'bad');
@@ -506,6 +515,7 @@ G.Act = (() => {
   // ревизия: закрыть и открыть каждую задвижку, чтобы не закисали
   function wellRevise(i) {
     const s = G.S, w = s.wells[i];
+    if (s.ev.burst && s.ev.burst.house === i) return toast('Не до ревизии — на вводе порыв', 'bad');
     if (w.v.some((v) => !v.open)) return toast('Сначала открой все задвижки — ревизия на работающей камере', 'bad');
     busy('Ревизия ' + TK(i) + ': расхаживаю задвижки, смазываю шпиндели', 25, { work: 0.08 }, () => {
       const bad = [];
@@ -557,5 +567,5 @@ G.Act = (() => {
   return { inv, has, tool, dur, isoReasons, dryReasons, needItems, valveToggle, valveUnstick, valveTighten, valveRepack,
     valveReplace, valveRegasket, pumpStart, pumpStop, pumpLube, pumpBearings, pumpSeal, drain, feed, corr, gvsSet,
     cleanFilter, flush, installReg, obhod, eat, machineCoffee, sleep, tv, shower, read, fishing, bleedAir, clampLeak,
-    meter, job, callBrigade, talk, wellDown, wellToggle, wellUnstick, wellRevise, wellStickP, shopOpen, buy, order, circName, take, pressReasons, pressTest, vacation };
+    meter, job, callBrigade, talk, wellDown, wellLock, wellToggle, wellUnstick, wellRevise, wellStickP, shopOpen, buy, order, circName, take, pressReasons, pressTest, vacation };
 })();

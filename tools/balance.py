@@ -48,7 +48,7 @@ def main():
         page.on('pageerror', lambda e: errs.append(str(e)))
         page.goto(URL)
         page.wait_for_timeout(300)
-        page.evaluate("G.Main.startNew(); G.UI.closeOverlay(); G.UI.toast=()=>{}; G.S.speed=0; window.cnt={}; G.UI.onMessage=(f,t)=>{ const k=f.split(',')[0]+': '+t.slice(0,50); cnt[k]=(cnt[k]||0)+1; }; 0")
+        page.evaluate("G.Main.startNew(); G.UI.closeOverlay(); G.Tut.skip(); G.UI.toast=()=>{}; G.S.speed=0; window.cnt={}; G.UI.onMessage=(f,t)=>{ const k=f.split(',')[0]+': '+t.slice(0,50); cnt[k]=(cnt[k]||0)+1; }; 0")
         mins = []
         for d in range(days):
             lo = 99

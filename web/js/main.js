@@ -74,6 +74,7 @@ G.Main = (() => {
   function goTo(x, cb) {
     const s = G.S;
     if (s.scene !== 'street' || G.busy) return;
+    G.UI.closePanel(); // уходим — панель люка или дома не тащим за собой
     walk = { to: U.clamp(x, 20, D.STREET_W - 20), cb };
     follow = true;
   }
@@ -185,7 +186,7 @@ G.Main = (() => {
     }
     if (s.scene === 'shop') { if (kind === 'door') exit(); else UI.panelShop(); return; }
     if (s.scene === 'house') { if (kind === 'exit') exit(); else UI.panelBasement(s.house); }
-    if (s.scene === 'well') { if (kind === 'exit') exit(); else UI.panelWell(s.well); }
+    if (s.scene === 'well') { if (kind === 'exit') exit(); else UI.panelWell(s.well, kind === 'wv' ? n : undefined); }
   }
 
   // ---------- цикл

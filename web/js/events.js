@@ -178,11 +178,13 @@ G.Ev = (() => {
       s.ev.burst.called = s.t;
       msg(ODS, 'Аварийную бригаду на порыв вызвали сами. Почему слесарь не сообщил?!');
     }
-    // новый порыв на этой же трубе — открывать нельзя, бригада копает
+    // новый порыв на этой же трубе — открывать нельзя, бригада копает; сорванную задвижку Михалыч не трогает
     const B = s.ev.burst;
     if (k.type === 'wellOpen' && !(B && B.house === k.ref && B.pipe === k.circ)) {
-      D.WELL_PIPES[k.circ].forEach((n) => Object.assign(s.wells[k.ref].v[n], { open: true, stuck: false, broken: false, lastOp: s.t }));
-      msg(BOSS, 'Михалыч открыл за тебя задвижки в ' + TK(k.ref) + ' — дом без ' + (k.circ === 'heat' ? 'тепла' : 'горячей воды') + ' сидел!');
+      const vs = D.WELL_PIPES[k.circ].map((n) => s.wells[k.ref].v[n]);
+      vs.forEach((v) => { if (!v.broken) Object.assign(v, { open: true, stuck: false, lastOp: s.t }); });
+      msg(BOSS, 'Михалыч открыл за тебя задвижки в ' + TK(k.ref) + ' — дом без ' + (k.circ === 'heat' ? 'тепла' : 'горячей воды') + ' сидел!' +
+        (vs.some((v) => v.broken) ? ' Сорванную не трогал — ждём подрядчиков.' : ''));
     }
   }
 
@@ -208,8 +210,9 @@ G.Ev = (() => {
     const who = U.pick(D.NAMES);
     const apt = U.rint(1, hd.apts);
     msg(who + ', ' + hd.name + ', кв. ' + apt, c.text, type !== 'air');
-    // дом отсечён на время ремонта порыва — жильцов предупредили, спрос мягче
-    const ex = s.ev.burst && s.ev.burst.house === i ? { excuse: true } : {};
+    // дом отсечён на время ремонта порыва — жильцов предупредили, спрос мягче (только по контуру порыва)
+    const B = s.ev.burst;
+    const ex = B && B.house === i && (B.pipe === 'heat' ? ['heat', 'overheat', 'air'] : ['hot']).includes(type) ? { excuse: true } : {};
     addTask(Object.assign({ type, ref: i, title: c.title + ': ' + hd.name, desc: c.text, deadline: s.t + c.dl, who }, ex));
     s.stats.complaints++;
   }
@@ -261,9 +264,20 @@ G.Ev = (() => {
   }
 
   // пропуск времени (больничный, отпуск): мир стоит, сроки задач сдвигаются (кроме летнего плана), зарплата приходит
+  // порыв и задвижки в камерах за это время закрывает Михалыч — без награды и штрафа
   function skipTime(mins) {
-    const s = G.S, t0 = s.t;
+    const s = G.S, t0 = s.t, B = s.ev.burst;
     s.t += mins;
+    const openWell = (i, c) => D.WELL_PIPES[c].forEach((n) => { const v = s.wells[i].v[n]; if (!v.broken) Object.assign(v, { open: true, stuck: false, lastOp: s.t }); });
+    if (B) {
+      s.ev.burst = null;
+      openWell(B.house, B.pipe);
+      msg(BOSS, 'Пока тебя не было, Михалыч с аварийкой разобрались с порывом у ' + D.HOUSES[B.house].name.replace('Дом', 'дома') + ' и открыли задвижки в ' + TK(B.house) + '.');
+    }
+    const wo = s.tasks.filter((k) => k.type === 'wellOpen' && !k.done && !k.failed);
+    wo.forEach((k) => openWell(k.ref, k.circ));
+    if (wo.length) msg(BOSS, 'Пока тебя не было, Михалыч открыл задвижки в ' + [...new Set(wo.map((k) => TK(k.ref)))].join(', ') + ' после ремонта.');
+    s.tasks = s.tasks.filter((k) => !wo.includes(k) && !(B && k.type === 'burst' && !k.done && !k.failed));
     for (const k of s.tasks) if (k.deadline && !k.plan) k.deadline += mins;
     s.ev.inspect = null;
     for (let dd = U.day(t0); dd <= U.day(s.t); dd++) {
@@ -372,7 +386,11 @@ G.Ev = (() => {
     if (E.burst) {
       const B = E.burst, tk = TK(B.house), iso = G.Sim.burstIsolated(s);
       // аварийка перекрывает ответвление сама — теми же задвижками в камере перед домом
-      const close = () => D.WELL_PIPES[B.pipe].forEach((n) => Object.assign(s.wells[B.house].v[n], { open: false, stuck: false, broken: false, lastOp: t }));
+      const close = () => {
+        const w = s.wells[B.house];
+        D.WELL_PIPES[B.pipe].forEach((n) => Object.assign(w.v[n], { open: false, stuck: false, broken: false, lastOp: t }));
+        if (!w.v.some((v) => v.broken)) w.fixAt = null; // сорванную заменила аварийка — подрядчики не нужны
+      };
       if (B.called !== null && !B.arrived && t >= B.called + 40) {
         B.arrived = true;
         B.fixAt = t + (iso ? 300 : 360);
@@ -488,10 +506,13 @@ G.Ev = (() => {
       msg(ODS, 'Водоканал отключил холодную воду в квартале — горячей тоже не будет. Подпитка отопления невозможна.', true);
     }
     // порыв на вводе в дом: отопление — только в сезон, ГВС — круглый год (кроме летнего отключения)
-    const heatBurst = season && per(0.012);
-    if (!E.burst && (heatBurst || (!(E.netOff && E.netOff.started) && per(0.005)))) {
+    // во время обучения ГВС не рвётся — первая замена Зд5 и так на ГВС
+    const heatBurst = season && per(0.012), tut = !!(s.tut && s.tut.done === false);
+    if (!E.burst && (heatBurst || (!(E.netOff && E.netOff.started) && !tut && per(0.005)))) {
       const i = U.rint(0, 4), pipe = heatBurst ? 'heat' : 'gvs', hn = D.HOUSES[i].name.replace('Дом', 'дома');
       E.burst = { house: i, pipe, at: t, called: null, arrived: false, fixAt: null };
+      // после прошлого ремонта ещё не открыли — старую задачу снимаем без штрафа, новая будет после этого ремонта
+      s.tasks = s.tasks.filter((k) => !(k.type === 'wellOpen' && !k.done && !k.failed && k.ref === i && k.circ === pipe));
       msg(U.pick(D.NAMES) + ', ' + D.HOUSES[i].name, pipe === 'heat' ? 'Возле нашего дома из-под земли валит пар! Порыв!' : 'У нас перед домом из-под асфальта бьёт горячая вода, всё в пару! Порыв!', true);
       addTask({ type: 'burst', ref: i, title: (pipe === 'heat' ? 'Порыв теплотрассы у ' : 'Порыв ГВС у ') + hn,
         desc: 'Вызвать аварийную бригаду (у дома или по телефону). Чтобы не терять воду — спуститься в камеру ' + TK(i) + ' (люк перед домом) и закрыть ' + pipesOf(pipe) + ' на ответвлении. ' +

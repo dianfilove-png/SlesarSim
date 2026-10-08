@@ -55,6 +55,8 @@ G.Sim = (() => {
   // чистое изменение давления отопления при открытой подпитке, бар/мин
   const feedNetRate = (S) => (S.ev.hvs ? 0 : FEED_RATE) - heatLeak(S) / 60 - (S.heat.drain ? 1 : 0);
   const anyOn = (S, c) => S.pumps.some((p) => p.circ === c && p.on);
+  // насос «на закрытую задвижку»: на ЦТП задвижки открыты — значит, перекрыты все камеры
+  const deadMsg = (p, ctpOpen) => (ctpOpen ? 'Насос ' + p.id + ' качает в закрытые камеры: во всех ТК перекрыт ввод на дома!' : 'Насос ' + p.id + ' работает на закрытую задвижку!');
 
   function weather(S, t) {
     const m = U.mod(t);
@@ -78,7 +80,7 @@ G.Sim = (() => {
     const H = S.heat;
     const head = headOf(S, 'heat');
     // все дома отсечены в камерах — насосу некуда качать, как на закрытую задвижку
-    const open = pipeOpen(S, 1) && pipeOpen(S, 2) && S.wells.some((w, i) => wellOpen(S, i, 'heat'));
+    const ctpOpen = pipeOpen(S, 1) && pipeOpen(S, 2), open = ctpOpen && S.wells.some((w, i) => wellOpen(S, i, 'heat'));
     const air = U.clamp((H.ps - 0.6) / 1.2, 0, 1);
     const q = head * (open ? 1 : 0) * (1 - H.clog / 100 * 0.75) * air;
     H.q += (q - H.q) * 0.3;
@@ -125,7 +127,7 @@ G.Sim = (() => {
       } else p.dryMsg = false;
       if (!open) {
         wearRun(p, 0.01, 0.04);
-        if (!p.deadMsg) { p.deadMsg = true; G.Ev.alarm('Насос ' + p.id + ' работает на закрытую задвижку!'); }
+        if (!p.deadMsg) { p.deadMsg = true; G.Ev.alarm(deadMsg(p, ctpOpen)); }
       } else p.deadMsg = false;
     }
     // завоздушивание стояков при низком давлении
@@ -176,7 +178,7 @@ G.Sim = (() => {
       } else p.dryMsg = false;
       if (!(open3 && open4 && loop)) {
         wearRun(p, 0.01, 0.04);
-        if (!p.deadMsg) { p.deadMsg = true; G.Ev.alarm('Насос ' + p.id + ' работает на закрытую задвижку!'); }
+        if (!p.deadMsg) { p.deadMsg = true; G.Ev.alarm(deadMsg(p, open3 && open4)); }
       } else p.deadMsg = false;
     }
     if (W.ps < 1.5 && !W.lowAlarm && !W.drain && !S.ev.hvs) {

@@ -39,8 +39,8 @@ G.UI = (() => {
     cur = { title, build, live: !!live };
     resume = false;
     render();
-    $('p-body').scrollTop = 0;
     $('panel').classList.remove('hidden');
+    $('p-body').scrollTop = 0; // у скрытой панели Chromium возвращает старую прокрутку
   }
   function render() {
     if (!cur) return;
@@ -515,6 +515,9 @@ G.UI = (() => {
         : 'открыть ' + v.id + (v.outer ? ' (справа у стены)' : ''))).join('; ');
       L.push({ t: 'Задвижки ' + D.PIPES[pp].name + ' (' + vs(pp).map((v) => v.id).join(', ') + ') открыты', ok: !cl.length, how });
     });
+    // все дома отсечены в камерах — насосу некуда качать
+    const wc = s.wells.map((w, i) => i).filter((i) => !G.Sim.wellOpen(s, i, c));
+    L.push({ t: 'Ввод в дома открыт (камеры ТК)', ok: wc.length < s.wells.length, how: 'закрыт в ' + wc.map(TK).join(', ') + ' — открыть ' + (c === 'heat' ? 'Т1/Т2' : 'Т3/Т4') + ' в камерах' });
     if (c === 'heat') {
       const Sm = G.Sim, low = C.ps < Sm.P_LOW, high = C.ps > Sm.P_HIGH;
       const feeding = C.feed || (C.auto && C.autoOn);
@@ -526,7 +529,9 @@ G.UI = (() => {
         how: C.ps >= Sm.P_CLOSE ? 'закрыть кран подпитки!' : rising ? 'закроешь на ~' + Sm.P_CLOSE + ' бар' : 'давление не растёт — закрой, разберись' });
     } else {
       L.push({ t: 'Холодная вода в квартале', ok: !s.ev.hvs, how: 'водоканал отключил — ждать' });
-      L.push({ t: 'Давление ГВС (сейчас ' + C.ps.toFixed(1) + ')', ok: C.ps >= 3, wait: !C.drain && !s.ev.hvs && C.ps < 3, how: C.drain ? 'закрыть дренаж — наполнится само' : 'наполняется само — жди' });
+      const B = s.ev.burst, gb = B && B.pipe === 'gvs' && !G.Sim.burstIsolated(s);
+      L.push({ t: 'Давление ГВС (сейчас ' + C.ps.toFixed(1) + ')', ok: C.ps >= 3, wait: !C.drain && !s.ev.hvs && !gb && C.ps < 3,
+        how: C.drain ? 'закрыть дренаж — наполнится само' : gb ? 'порыв ГВС у ' + D.HOUSES[B.house].name.replace('Дом', 'дома') + ' — перекрыть Т3/Т4 в ' + TK(B.house) : 'наполняется само — жди' });
     }
     const run = pumps.some((p) => p.on && !p.broken);
     L.push({ t: 'Насос ' + pumps.map((p) => p.id).join(' или ') + ' работает', ok: run, pump: true,
@@ -640,7 +645,6 @@ G.UI = (() => {
     panel(D.HOUSES[i].name, (b) => {
       houseInfo(b, i);
       sect(b, 'Действия');
-      if (s.ev.burst && s.ev.burst.house === i && s.ev.burst.called === null) btn(b, 'Вызвать аварийную бригаду на порыв!', () => A().callBrigade(), { cls: 'danger', sub: dur(5) });
       if (D.HOUSES[i].mine) btn(b, 'Подняться домой, кв. 12', () => G.Main.enter('home'), { cls: 'main' });
       btn(b, 'Спуститься в подвал (узел ввода)', () => { s.house = i; G.Main.enter('house'); }, { cls: D.HOUSES[i].mine ? '' : 'main' });
       const bw = s.ev.burst && s.ev.burst.house === i && !G.Sim.burstIsolated(s);
@@ -660,7 +664,6 @@ G.UI = (() => {
       if (hs.leak) btn(b, 'Наложить хомут на стояк', () => A().clampLeak(i), { cls: inv('clamp') ? 'main' : 'warn', sub: 'Хомут ремонтный (есть ' + inv('clamp') + ') · ' + dur(30) });
       if (G.Ev.openTask('meter', i)) btn(b, 'Снять показания теплосчётчика', () => A().meter(i), { cls: 'main', sub: dur(10) });
       s.tasks.filter((k) => k.type === 'job' && k.ref === i && !k.done && !k.failed).forEach((k) => btn(b, 'Шабашка: кв. ' + k.apt + ' — ' + k.job, () => A().job(k.id), { sub: U.money(k.money) + ' · ' + dur(k.min) }));
-      if (s.ev.burst && s.ev.burst.house === i && s.ev.burst.called === null) btn(b, 'Вызвать аварийную бригаду на порыв!', () => A().callBrigade(), { cls: 'danger' });
       btn(b, 'Выйти на улицу', () => G.Main.exit(), { cls: 'ghost' });
     }, true);
   }
@@ -669,13 +672,19 @@ G.UI = (() => {
   const TK = (i) => 'ТК-' + (i + 1);
   const wellState = (v) => (v.broken ? 'сорван шпиндель' : (v.open ? 'открыта' : 'ЗАКРЫТА') + (v.stuck ? ' · закисла' : ''));
   const wellCls = (v) => (v.broken || v.stuck ? 'bad' : v.open ? 'ok' : 'warn');
+  // строка порыва у дома: хлещет или отсечён — и что с бригадой
+  function burstKv(b, i) {
+    const s = G.S, B = s.ev.burst;
+    if (!B || B.house !== i) return;
+    const iso = G.Sim.burstIsolated(s);
+    kv(b, B.pipe === 'heat' ? 'Порыв теплотрассы' : 'Порыв ГВС', !iso ? 'ХЛЕЩЕТ — закрыть ' + (B.pipe === 'heat' ? 'Т1 и Т2' : 'Т3 и Т4')
+      : B.arrived ? 'отсечён · бригада копает до ' + U.clock(B.fixAt) : B.called !== null ? 'отсечён · ждём бригаду' : 'отсечён · вызови бригаду!',
+    !iso ? 'bad' : B.called === null ? 'warn' : 'ok');
+  }
   function wellInfo(b, i) {
-    const s = G.S, w = s.wells[i], B = s.ev.burst;
+    const s = G.S, w = s.wells[i];
     w.v.forEach((v, k) => kv(b, D.PIPES[k + 1].full.replace(' — ', ' (') + ')', wellState(v), wellCls(v)));
-    if (B && B.house === i) {
-      const iso = G.Sim.burstIsolated(s);
-      kv(b, B.pipe === 'heat' ? 'Порыв теплотрассы' : 'Порыв ГВС', iso ? 'отсечён' : 'ХЛЕЩЕТ — закрыть ' + (B.pipe === 'heat' ? 'Т1 и Т2' : 'Т3 и Т4'), iso ? 'ok' : 'bad');
-    }
+    burstKv(b, i);
     if (w.fixAt !== null) kv(b, 'Подрядчики', 'заменят задвижку ' + U.dateStr(w.fixAt) + ', ' + U.clock(w.fixAt), 'warn');
     kv(b, 'Ревизия', w.revAt >= 0 ? U.dateStr(w.revAt) : 'не проводилась', w.revAt >= 0 ? 'ok' : 'warn');
   }
@@ -693,21 +702,20 @@ G.UI = (() => {
       btn(b, 'Отойти', () => closePanel(), { cls: 'ghost' });
     }, true);
   }
-  // внизу, в камере
-  function panelWell(i) {
+  // внизу, в камере; wk — задвижка, по которой тапнули: панель прокручивается к ней
+  function panelWell(i, wk) {
     const s = G.S;
     panel(() => 'Камера ' + TK(i) + ' — задвижки', (b) => {
       const w = s.wells[i], B = s.ev.burst;
       para(b, 'Ответвление на ' + D.HOUSES[i].name.replace('Дом', 'дом') + '. Т1/Т2 закрыть — дом без отопления, Т3/Т4 — без горячей воды. Задвижки годами не трогали — могут закиснуть.', true);
-      if (B && B.house === i) {
-        const iso = G.Sim.burstIsolated(s);
-        kv(b, B.pipe === 'heat' ? 'Порыв теплотрассы' : 'Порыв ГВС', iso ? 'отсечён' : 'ХЛЕЩЕТ — закрыть ' + (B.pipe === 'heat' ? 'Т1 и Т2' : 'Т3 и Т4'), iso ? 'ok' : 'bad');
-      }
+      burstKv(b, i);
       const need = B && B.house === i ? D.WELL_PIPES[B.pipe] : [];
       // что открыть после ремонта: задачи по отоплению и ГВС этого дома
       const reopen = s.tasks.filter((t) => t.type === 'wellOpen' && t.ref === i && !t.done && !t.failed).reduce((a, t) => a.concat(D.WELL_PIPES[t.circ]), []);
-      w.v.forEach((v, k) => {
-        sect(b, D.PIPES[k + 1].full + ': ' + wellState(v));
+      // при порыве — сначала задвижки его контура
+      need.concat([0, 1, 2, 3].filter((k) => !need.includes(k))).forEach((k) => {
+        const v = w.v[k];
+        sect(b, D.PIPES[k + 1].full + ': ' + wellState(v)).dataset.wk = k;
         if (v.broken) { para(b, 'Шпиндель сорван. Заменят подрядчики' + (w.fixAt !== null ? ' — ' + U.dateStr(w.fixAt) + ', ' + U.clock(w.fixAt) : '') + '.', true); return; }
         if (v.stuck) {
           btn(b, 'WD-40 и расходить штурвал', () => A().wellUnstick(i, k, 'wd'), { cls: inv('wd40') ? 'main' : 'warn', sub: 'WD-40 (есть ' + inv('wd40') + ') · ' + dur(15) + ' · шанс высокий' });
@@ -715,16 +723,19 @@ G.UI = (() => {
           return;
         }
         const urgent = (v.open && need.includes(k) && !G.Sim.burstIsolated(s)) || (!v.open && reopen.includes(k) && !need.includes(k));
+        const lock = v.open ? '' : A().wellLock(i, k);
         btn(b, v.open ? 'Закрыть ' + D.PIPES[k + 1].name : 'Открыть ' + D.PIPES[k + 1].name, () => A().wellToggle(i, k),
-          { cls: urgent ? 'main' : '', sub: dur(6) + (v.open ? ' · дом останется без ' + (k < 2 ? 'отопления' : 'горячей воды') : '') });
+          lock ? { disabled: true, sub: lock } : { cls: urgent ? 'main' : '', sub: dur(6) + (v.open ? ' · дом останется без ' + (k < 2 ? 'отопления' : 'горячей воды') : '') });
       });
       sect(b, 'Обслуживание');
       const rv = w.v.some((v) => !v.open);
       const rt = G.Ev.openTask('wellRev');
-      btn(b, 'Ревизия: расходить все задвижки', () => A().wellRevise(i), { cls: rv ? 'warn' : rt && !(w.revAt > rt.from) ? 'main' : '',
-        sub: rv ? 'Сначала открыть все задвижки' : 'Закрыть-открыть каждую, смазать шпиндель · ' + dur(25) });
+      btn(b, 'Ревизия: расходить все задвижки', () => A().wellRevise(i), B && B.house === i ? { disabled: true, sub: 'Не до ревизии — на вводе порыв' }
+        : { cls: rv ? 'warn' : rt && !(w.revAt > rt.from) ? 'main' : '', sub: rv ? 'Сначала открыть все задвижки' : 'Закрыть-открыть каждую, смазать шпиндель · ' + dur(25) });
       btn(b, 'Подняться наверх', () => G.Main.exit(), { cls: 'ghost' });
     }, true);
+    const body = $('p-body'), el = wk === undefined ? null : body.querySelector('[data-wk="' + wk + '"]');
+    if (el) body.scrollTop = el.offsetTop - body.offsetTop - 8;
   }
 
   // ================= магазин

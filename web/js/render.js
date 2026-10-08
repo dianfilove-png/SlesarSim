@@ -294,8 +294,9 @@ G.R = (() => {
       ctx.beginPath(); ctx.ellipse(wx, gy + 8, 18, 5.5, 0, 0, Math.PI * 2);
       ctx.fillStyle = '#3b3a37'; ctx.fill(); ctx.strokeStyle = '#1e1d1a'; ctx.lineWidth = 2; ctx.stroke();
       ctx.beginPath(); ctx.ellipse(wx, gy + 8, 11, 3.2, 0, 0, Math.PI * 2); ctx.strokeStyle = '#55534d'; ctx.lineWidth = 1; ctx.stroke();
-      text('ТК-' + (i + 1), wx, gy - 4, 9, w.v.some((v) => !v.open) ? '#ff8a80' : '#dfe6ee', 'center', true);
-      addHit('well:' + i, wx - 28, gy - 2, 56, 32);
+      // подпись — в колодце под тротуаром; хит — люк и вся камера, но не выше тротуара (там двери подъездов)
+      text('ТК-' + (i + 1), wx, cy + 48, 11, w.v.some((v) => !v.open) ? '#ff9e94' : '#e8eef5', 'center', true);
+      addHit('well:' + i, wx - 30, gy - 2, 60, cy + 60 - gy);
     });
     if (s.ev.burst) {
       const bx = D.wellX(s.ev.burst.house) + 62;
