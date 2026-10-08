@@ -75,7 +75,8 @@ G.Tut = (() => {
   const step = () => (active() ? STEPS[G.S.tut.step] || null : null);
   const visible = () => {
     const st = step();
-    return !!(st && !st.hidden && !G.busy && !G.MG.isOpen() && $('overlay').classList.contains('hidden'));
+    // в подвале и камере шагов обучения нет — пузырь не закрывает задвижки
+    return !!(st && !st.hidden && G.S.scene !== 'well' && G.S.scene !== 'house' && !G.busy && !G.MG.isOpen() && $('overlay').classList.contains('hidden'));
   };
 
   function setHl(el) {

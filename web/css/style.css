@@ -161,6 +161,7 @@ button { font: inherit; color: inherit; touch-action: manipulation; }
 #zonebar button.on { border-color: #f0a020; color: #ffd36b; }
 #zonebar button.list { background: #2a3a52; font-size: 15px; }
 #zonebar.tut-off { display: none; }
+@media (max-width: 700px) { .hud-bars { gap: 5px; } .bar { min-width: 30px; } .bar b { font-size: 9px; text-overflow: ellipsis; } }
 @media (max-height: 370px) { #zonebar { bottom: 4px; } #zonebar button { height: 32px; } }
 .eq { display: flex; gap: 6px; flex-wrap: wrap; }
 .eq .btn { width: calc(50% - 3px); margin: 3px 0; min-height: 36px; padding: 5px 9px; font-size: 13px; }
