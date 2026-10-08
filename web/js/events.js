@@ -178,7 +178,9 @@ G.Ev = (() => {
       s.ev.burst.called = s.t;
       msg(ODS, 'Аварийную бригаду на порыв вызвали сами. Почему слесарь не сообщил?!');
     }
-    if (k.type === 'wellOpen') {
+    // новый порыв на этой же трубе — открывать нельзя, бригада копает
+    const B = s.ev.burst;
+    if (k.type === 'wellOpen' && !(B && B.house === k.ref && B.pipe === k.circ)) {
       D.WELL_PIPES[k.circ].forEach((n) => Object.assign(s.wells[k.ref].v[n], { open: true, stuck: false, broken: false, lastOp: s.t }));
       msg(BOSS, 'Михалыч открыл за тебя задвижки в ' + TK(k.ref) + ' — дом без ' + (k.circ === 'heat' ? 'тепла' : 'горячей воды') + ' сидел!');
     }
@@ -384,7 +386,7 @@ G.Ev = (() => {
       if (B.arrived && t >= B.fixAt) {
         E.burst = null;
         msg('Аварийная бригада', 'Порыв заварили, яму засыпали. Задвижки в камере ' + tk + ' оставили закрытыми — спустись и открой ' + pipesOf(B.pipe) + (B.pipe === 'heat' ? ', потом проверь давление в отоплении.' : '.'), true);
-        if (!openTask('wellOpen', B.house)) addTask({ type: 'wellOpen', ref: B.house, circ: B.pipe, title: 'Открыть задвижки в ' + tk, desc: 'Порыв устранён. Спуститься в камеру ' + tk + ' (люк на тротуаре перед ' + before(B.house) + ') и открыть ' + pipesOf(B.pipe) + ' — дом сидит без ' + (B.pipe === 'heat' ? 'отопления' : 'горячей воды') + '.', deadline: t + 180, excuse: false });
+        if (!G.S.tasks.some((k) => k.type === 'wellOpen' && !k.done && !k.failed && k.ref === B.house && k.circ === B.pipe)) addTask({ type: 'wellOpen', ref: B.house, circ: B.pipe, title: 'Открыть задвижки в ' + tk, desc: 'Порыв устранён. Спуститься в камеру ' + tk + ' (люк на тротуаре перед ' + before(B.house) + ') и открыть ' + pipesOf(B.pipe) + ' — дом сидит без ' + (B.pipe === 'heat' ? 'отопления' : 'горячей воды') + '.', deadline: t + 180, excuse: false });
       }
     }
     // сорванный шпиндель в камере меняют подрядчики

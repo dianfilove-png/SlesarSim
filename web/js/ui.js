@@ -681,8 +681,9 @@ G.UI = (() => {
   }
   // у люка на улице
   function panelHatch(i) {
-    const s = G.S, B = s.ev.burst;
+    const s = G.S;
     panel('Тепловая камера ' + TK(i), (b) => {
+      const B = s.ev.burst;
       para(b, 'Колодец на тротуаре перед ' + D.HOUSES[i].name.replace('Дом', 'домом') + ': от магистрали квартала тут отходит ответвление на дом — четыре задвижки, Т1–Т4. Если порыв на вводе или в доме — перекрыть здесь, и вода не уходит, а остальные дома живут.', true);
       wellInfo(b, i);
       sect(b, 'Действия');
@@ -703,7 +704,8 @@ G.UI = (() => {
         kv(b, B.pipe === 'heat' ? 'Порыв теплотрассы' : 'Порыв ГВС', iso ? 'отсечён' : 'ХЛЕЩЕТ — закрыть ' + (B.pipe === 'heat' ? 'Т1 и Т2' : 'Т3 и Т4'), iso ? 'ok' : 'bad');
       }
       const need = B && B.house === i ? D.WELL_PIPES[B.pipe] : [];
-      const task = G.Ev.openTask('wellOpen', i);
+      // что открыть после ремонта: задачи по отоплению и ГВС этого дома
+      const reopen = s.tasks.filter((t) => t.type === 'wellOpen' && t.ref === i && !t.done && !t.failed).reduce((a, t) => a.concat(D.WELL_PIPES[t.circ]), []);
       w.v.forEach((v, k) => {
         sect(b, D.PIPES[k + 1].full + ': ' + wellState(v));
         if (v.broken) { para(b, 'Шпиндель сорван. Заменят подрядчики' + (w.fixAt !== null ? ' — ' + U.dateStr(w.fixAt) + ', ' + U.clock(w.fixAt) : '') + '.', true); return; }
@@ -712,7 +714,7 @@ G.UI = (() => {
           btn(b, 'Газовым ключом с трубой', () => A().wellUnstick(i, k, 'force'), { cls: 'danger', sub: dur(10) + ' · можно сорвать шпиндель!' });
           return;
         }
-        const urgent = (v.open && need.includes(k) && !G.Sim.burstIsolated(s)) || (!v.open && task && D.WELL_PIPES[task.circ].includes(k) && !need.length);
+        const urgent = (v.open && need.includes(k) && !G.Sim.burstIsolated(s)) || (!v.open && reopen.includes(k) && !need.includes(k));
         btn(b, v.open ? 'Закрыть ' + D.PIPES[k + 1].name : 'Открыть ' + D.PIPES[k + 1].name, () => A().wellToggle(i, k),
           { cls: urgent ? 'main' : '', sub: dur(6) + (v.open ? ' · дом останется без ' + (k < 2 ? 'отопления' : 'горячей воды') : '') });
       });

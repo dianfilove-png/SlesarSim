@@ -5,13 +5,13 @@ G.St = (() => {
   const KEY = 'slesarsim_save_v1';
 
   // тепловая камера: 4 задвижки на ответвлении к дому (Т1–Т4), годами не тронутые — могут закиснуть
-  function newWell() {
-    return { revAt: -1, fixAt: null, v: [0, 1, 2, 3].map(() => ({ open: true, stuck: false, broken: false, lastOp: -Math.round(120 + Math.random() * 300) * 1440 })) };
+  function newWell(t0) {
+    return { revAt: -1, fixAt: null, v: [0, 1, 2, 3].map(() => ({ open: true, stuck: false, broken: false, lastOp: (t0 || 0) - Math.round(120 + Math.random() * 300) * 1440 })) };
   }
   // старые сохранения: до камер дом отсекала аварийка флагом cutoff
   function migrate(S) {
     if (!S.wells) {
-      S.wells = G.D.HOUSES.map(() => newWell());
+      S.wells = G.D.HOUSES.map(() => newWell(S.t));
       const B = S.ev && S.ev.burst;
       if (B) {
         B.pipe = B.pipe || 'heat';

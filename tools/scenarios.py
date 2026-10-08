@@ -83,7 +83,8 @@ def main():
         shot(page, '13b_well_steam', True)
         hp = page.evaluate("G.S.p.health")
         assert hp < 90, 'ожог в камере с порывом не сработал'
-        page.evaluate("G.S.wells[2].v.forEach(v=>{v.stuck=false; v.lastOp=G.S.t}); G.Act.wellToggle(2,0); G.Main.advance(8); G.Act.wellToggle(2,1); G.Main.advance(8)")
+        # без случайного закисания — проверяем логику, а не удачу
+        page.evaluate("window._rnd=Math.random; Math.random=()=>0.5; G.S.wells[2].v.forEach(v=>{v.stuck=false; v.lastOp=G.S.t}); G.Act.wellToggle(2,0); G.Main.advance(8); G.Act.wellToggle(2,1); G.Main.advance(8); Math.random=window._rnd")
         iso = page.evaluate("[G.Sim.burstIsolated(G.S), G.S.wells[2].v.map(v=>v.open), G.Sim.heatLeak(G.S).toFixed(2)]")
         print('well isolate:', iso)
         assert iso[0], 'порыв не отсечён задвижками камеры'
@@ -95,7 +96,7 @@ def main():
         tk = page.evaluate("[!G.S.ev.burst, G.S.tasks.filter(k=>k.type==='wellOpen'&&!k.done&&!k.failed).length]")
         print('after repair:', tk)
         assert tk == [True, 1], 'нет задачи открыть задвижки после ремонта'
-        page.evaluate("G.UI.closePanel(); G.Act.wellToggle(2,0); G.Main.advance(8); G.Act.wellToggle(2,1); G.Main.advance(8)")
+        page.evaluate("G.UI.closePanel(); Math.random=()=>0.5; G.Act.wellToggle(2,0); G.Main.advance(8); G.Act.wellToggle(2,1); G.Main.advance(8); Math.random=window._rnd")
         assert page.evaluate("G.S.tasks.some(k=>k.type==='wellOpen'&&k.done)"), 'задача открыть задвижки не закрылась'
         page.evaluate("G.UI.closePanel(); G.Main.exit()")
         page.wait_for_timeout(500)

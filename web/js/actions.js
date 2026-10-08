@@ -439,8 +439,9 @@ G.Act = (() => {
   // шанс закиснуть: задвижки в камерах годами не трогают
   const wellStickP = (v) => 0.04 + U.clamp((G.S.t - v.lastOp) / 1440 - 30, 0, 300) / 1000;
   function wellDown(i) {
-    const s = G.S, B = s.ev.burst;
+    const s = G.S;
     busy('Поддеваю люк крюком, спускаюсь в камеру ' + TK(i), 4, { work: 0.04 }, () => {
+      const B = s.ev.burst;
       s.well = i;
       G.Main.enter('well');
       if (B && B.house === i && !Sim.burstIsolated(s)) {
@@ -466,12 +467,14 @@ G.Act = (() => {
     if (v.stuck) return toast('Задвижка закисла и не проворачивается', 'bad');
     const closing = v.open;
     busy((closing ? 'Закрываю ' : 'Открываю ') + WPIPE[k] + ' в ' + TK(i) + ' — тесно, штурвал тугой…', 6, { work: 0.07 }, () => {
+      // пока крутил, задвижку могла перекрыть аварийка
+      if (v.open !== closing || v.broken || v.stuck) return toast(WPIPE[k] + ' уже ' + (v.open ? 'открыта' : 'закрыта'));
       if (Math.random() < wellStickP(v)) {
         v.stuck = true;
         toast('Задвижка ' + WPIPE[k] + ' закисла — штурвал ни в какую! Нужна WD-40.', 'bad');
         return;
       }
-      v.open = !v.open;
+      v.open = !closing;
       v.lastOp = s.t;
       toast(WPIPE[k] + ' на ' + D.HOUSES[i].name.replace('Дом', 'дом') + (v.open ? ' открыта' : ' закрыта'));
       if (!v.open) checkIsolated(i);
@@ -512,7 +515,11 @@ G.Act = (() => {
         if (Math.random() < wellStickP(v) * 0.4) { v.stuck = true; bad.push(WPIPE[k] + ' — закисла'); return; }
         v.lastOp = s.t;
       });
-      if (!bad.length) { w.revAt = s.t; Ev.xp(8); toast('Ревизия ' + TK(i) + ': все четыре задвижки ходят. Записал в журнал.', 'good'); }
+      if (!bad.length) {
+        if (w.revAt <= (s.flags.summerFrom || 0)) Ev.xp(8);
+        w.revAt = s.t;
+        toast('Ревизия ' + TK(i) + ': все четыре задвижки ходят. Записал в журнал.', 'good');
+      }
       else toast('Ревизия ' + TK(i) + ' не закончена: ' + bad.join(', ') + '.', 'bad');
     });
   }

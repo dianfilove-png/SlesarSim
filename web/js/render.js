@@ -295,7 +295,7 @@ G.R = (() => {
       ctx.fillStyle = '#3b3a37'; ctx.fill(); ctx.strokeStyle = '#1e1d1a'; ctx.lineWidth = 2; ctx.stroke();
       ctx.beginPath(); ctx.ellipse(wx, gy + 8, 11, 3.2, 0, 0, Math.PI * 2); ctx.strokeStyle = '#55534d'; ctx.lineWidth = 1; ctx.stroke();
       text('ТК-' + (i + 1), wx, gy - 4, 9, w.v.some((v) => !v.open) ? '#ff8a80' : '#dfe6ee', 'center', true);
-      addHit('well:' + i, wx - 28, gy - 14, 56, 44);
+      addHit('well:' + i, wx - 28, gy - 2, 56, 32);
     });
     if (s.ev.burst) {
       const bx = D.wellX(s.ev.burst.house) + 62;
