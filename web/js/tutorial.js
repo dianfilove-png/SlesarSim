@@ -40,6 +40,8 @@ G.Tut = (() => {
         if (!panelOpen() || ptitle() !== 'Телефон') return $('b-phone');
         const tab = findBtn('#p-body .tabs', 'Склад');
         if (tab && !tab.classList.contains('on')) return tab;
+        const row = document.querySelector('#p-body .qty[data-item="valve"]');
+        if (row && row.querySelector('b').textContent === '0') return row.lastChild;
         return findBtn('#p-body', 'Отправить заявку');
       },
       done: (s) => (s.p.inv.valve || 0) > 0 || s.orders.some((o) => o.items.valve) || s.valves[4].replacedAt > 0 },
@@ -80,10 +82,15 @@ G.Tut = (() => {
     if (hl === el) return;
     if (hl) hl.classList.remove('tut-hl');
     hl = el || null;
-    if (hl) hl.classList.add('tut-hl');
+    if (hl) {
+      hl.classList.add('tut-hl');
+      if (hl.closest('#p-body')) hl.scrollIntoView({ block: 'nearest' });
+    }
   }
   function hide() {
-    $('toasts').style.top = '';
+    const t = $('toasts');
+    t.style.top = ''; t.style.left = ''; t.style.right = '';
+    $('zonebar').classList.remove('tut-off');
     $('tut').classList.add('hidden');
     document.body.classList.remove('tut-on');
     setHl(null);
@@ -129,15 +136,24 @@ G.Tut = (() => {
     setHl(el);
     place(el, st.world && st.world(s));
   }
-  // пузырь — сверху или снизу, подальше от цели; тосты — под пузырём
+  // пузырь — сверху или снизу, подальше от цели; тосты — под пузырём, но по другую сторону от цели
   function place(el, w) {
-    const box = $('tut'), toasts = $('toasts');
-    let ty = null;
-    if (el) { const r = el.getBoundingClientRect(); ty = (r.top + r.bottom) / 2; }
-    else if (w && w.scene === G.S.scene) ty = (w.y + 14 + (w.scene === 'ctp' ? Math.max(0, (G.R.LH - 540) / 2) : 0)) * G.R.scale;
+    const box = $('tut'), toasts = $('toasts'), R = G.R;
+    let tx = null, ty = null;
+    if (el) { const r = el.getBoundingClientRect(); tx = (r.left + r.right) / 2; ty = (r.top + r.bottom) / 2; }
+    else if (w && w.scene === G.S.scene) {
+      ty = (w.y + 14 + (w.scene === 'ctp' ? Math.max(0, (R.LH - 540) / 2) : 0)) * R.scale;
+      tx = (w.x - (w.scene === 'ctp' ? R.cam.ctp : w.scene === 'street' ? R.cam.street : 0)) * R.scale;
+    }
     const top = ty !== null && ty > window.innerHeight * 0.45;
     box.classList.toggle('top', top);
+    const away = top && tx !== null && tx < window.innerWidth / 2;
     toasts.style.top = top ? (box.offsetTop + box.offsetHeight + 6) + 'px' : '';
+    toasts.style.left = away ? 'auto' : '';
+    toasts.style.right = away ? '8px' : '';
+    // цель под кнопками зон — прячем их, пока шаг не пройден
+    const z = $('zonebar').getBoundingClientRect();
+    $('zonebar').classList.toggle('tut-off', !el && tx !== null && ty + 22 > z.top - 4 && tx + 40 > z.left && tx - 40 < z.right);
   }
   function worldTarget() {
     const st = step();

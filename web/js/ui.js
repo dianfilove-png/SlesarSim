@@ -39,6 +39,7 @@ G.UI = (() => {
     cur = { title, build, live: !!live };
     resume = false;
     render();
+    $('p-body').scrollTop = 0;
     $('panel').classList.remove('hidden');
   }
   function render() {
@@ -176,7 +177,7 @@ G.UI = (() => {
     ZONES.forEach(([l, x]) => {
       const b = h('button', '', esc(l));
       b.dataset.x = x;
-      b.onclick = () => { G.Snd.play('click'); G.R.focusCtp(x); };
+      b.onclick = () => { G.Snd.play('click'); zoneLast = b; G.R.focusCtp(x); };
       z.appendChild(b);
     });
     const L = h('button', 'list', '≡');
@@ -184,11 +185,17 @@ G.UI = (() => {
     L.onclick = () => { G.Snd.play('click'); panelEquip(); };
     z.appendChild(L);
   }
+  let zoneLast = null;
   function zoneHighlight() {
     if (!G.S || G.S.scene !== 'ctp') return;
-    const c = G.R.cam.ctp + G.R.LW / 2;
+    // сравниваем с той позицией камеры, куда зона реально её ставит (у краёв камера упирается)
+    const R = G.R, c = R.cam.ctp, max = Math.max(0, R.CT.W - R.LW);
     let best = null, bd = 1e9;
-    [...$('zonebar').children].forEach((b) => { if (!b.dataset.x) return; const d = Math.abs(Number(b.dataset.x) - c); if (d < bd) { bd = d; best = b; } });
+    [...$('zonebar').children].forEach((b) => {
+      if (!b.dataset.x) return;
+      const d = Math.abs(U.clamp(Number(b.dataset.x) - R.LW / 2, 0, max) - c) + (b === zoneLast ? -1 : 0);
+      if (d < bd) { bd = d; best = b; }
+    });
     [...$('zonebar').children].forEach((b) => b.classList.toggle('on', b === best));
   }
   function openObj(id) {
@@ -726,6 +733,7 @@ G.UI = (() => {
       const n = orderDraft[id] || 0;
       sum += n * it.price;
       const row = h('div', 'qty');
+      row.dataset.item = id;
       row.innerHTML = '<span>' + esc(it.name) + (locked ? ' (с ' + it.minRank + '-го разряда)' : '') + '<br><small style="color:#9fb0c4">' + U.money(it.price) + ' · в ящике: ' + inv(id) + '</small></span>';
       const minus = h('button', '', '−'), plus = h('button', '', '+'), q = h('b', '', String(n));
       minus.onclick = () => { orderDraft[id] = Math.max(0, n - 1); render(); };

@@ -472,12 +472,15 @@ G.R = (() => {
   }
   function drawCTP(s, P) {
     const W = CT.W;
-    if (camTo.ctp !== null && LW < W) {
-      const tgt = U.clamp(camTo.ctp, 0, W - LW);
+    // с открытой панелью справа камера может уехать дальше края, чтобы объект не прятался под панелью
+    const pad = G.UI.panelOpen() ? document.getElementById('panel').offsetWidth / scale : 0;
+    const max = Math.max(0, W - LW) + pad;
+    if (camTo.ctp !== null && (LW < W || pad)) {
+      const tgt = U.clamp(camTo.ctp, 0, max);
       cam.ctp += (tgt - cam.ctp) * 0.18;
       if (Math.abs(tgt - cam.ctp) < 1.5) { cam.ctp = tgt; camTo.ctp = null; }
     }
-    const camX = cam.ctp = LW >= W ? -(LW - W) / 2 : U.clamp(cam.ctp, 0, W - LW);
+    const camX = cam.ctp = LW >= W && !pad ? -(LW - W) / 2 : cam.ctp > max ? cam.ctp + (max - cam.ctp) * 0.18 : U.clamp(cam.ctp, 0, max);
     tx = -camX; ty = Math.max(0, (LH - 540) / 2);
     // фон
     rect(0, 0, LW, LH, '#cfcabb');

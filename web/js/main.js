@@ -168,7 +168,12 @@ G.Main = (() => {
         drain: () => UI.panelDrain(a), feed: () => UI.panelFeed(), gauge: () => UI.panelGauge(n), cabinet: () => UI.panelCabinet(),
         desk: () => UI.panelDesk(), box: () => UI.panelBox(), net: () => UI.panelNet(), hvs: () => UI.panelHvs(),
       };
-      if (map[kind]) map[kind]();
+      if (map[kind]) {
+        map[kind]();
+        // объект оказался под панелью — сдвигаем камеру, чтобы его было видно слева
+        const pw = UI.panelOpen() ? document.getElementById('panel').offsetWidth : 0;
+        if (pw && cx > window.innerWidth - pw - 30) R.focusCtp(l.x + R.cam.ctp, 0.22);
+      }
       return;
     }
     if (s.scene === 'home') {
@@ -243,6 +248,12 @@ G.Main = (() => {
     cv.addEventListener('pointermove', onMove);
     cv.addEventListener('pointerup', onUp);
     cv.addEventListener('pointercancel', () => { down = null; });
+    // тап по канвасу открывает панель прямо под пальцем — «хвостовой» click после касания не должен нажать в ней кнопку
+    // пустой click-слушатель: для «подстройки касания» Chromium канвас тоже кликабельный, и тап у края не уводит в соседнюю кнопку
+    cv.addEventListener('click', () => {});
+    let downCv = false;
+    document.addEventListener('pointerdown', (e) => { downCv = e.target === cv; }, true);
+    document.addEventListener('click', (e) => { if (e.isTrusted && downCv && e.target !== cv) { e.stopImmediatePropagation(); e.preventDefault(); } downCv = false; }, true);
     window.addEventListener('resize', () => R.resize());
     document.addEventListener('visibilitychange', () => { if (document.hidden) save(true); });
     window.onAndroidPause = () => save(true);
