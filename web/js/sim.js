@@ -194,9 +194,9 @@ G.Sim = (() => {
       }
       hs.ttap += (tt - hs.ttap) * 0.06;
 
-      const cold = season ? Math.max(0, 18.5 - hs.tin) : 0;
+      const cold = season && S.t >= (S.flags.coldGrace || 0) ? Math.max(0, 18.5 - hs.tin) : 0;
       const hot = Math.max(0, hs.tin - 26) * 0.6;
-      const noHot = S.ev.hvs || (S.ev.netOff && S.ev.netOff.started) ? 0 : Math.max(0, 52 - hs.ttap) / 8 * (night ? 0.3 : 1);
+      const noHot = S.ev.hvs || (S.ev.netOff && S.ev.netOff.started) || S.t < (S.flags.hotGrace || 0) ? 0 : Math.max(0, 52 - hs.ttap) / 8 * (night ? 0.3 : 1);
       const bad = cold + hot + noHot + (hs.leak ? 0.5 : 0) + (hs.air ? 0.4 : 0) + (hs.cutoff ? 0.5 : 0);
       hs.sat = U.clamp(hs.sat + (bad > 0.05 ? -bad * 0.004 : 0.003), 0, 100);
       G.Ev.complaints(i, cold, hot, noHot, night);

@@ -36,19 +36,20 @@ G.Ev = (() => {
     return s.t + 30 * 1440;
   }
   function summerPlan(s) {
-    const dl = tOf(s, 7, 31, 18);
+    const dl = tOf(s, 7, 31, 18), from = s.flags.summerFrom || 0;
     const made = [];
-    const add = (o) => { addTask(Object.assign({ deadline: dl }, o)); made.push(o.title); };
-    add({ type: 'pressTest', title: 'Опрессовка отопления', desc: 'Гидравлические испытания системы отопления на 7,5 бар. Кнопка — в шкафу или у подпитки (насосы стоят, задвижки открыты, система заполнена).' });
-    [0, 1].forEach((i) => add({ type: 'pumpRev', ref: i, title: 'Ревизия насоса ' + s.pumps[i].id, desc: 'Заменить подшипники или уплотнение насоса ' + s.pumps[i].id + ' — перебрать перед зимой.' }));
-    if (!openTask('cleanFilter')) add({ type: 'cleanFilter', title: 'Почистить грязевик', desc: 'Перед сезоном грязевик должен быть чистым.' });
-    if (s.heat.foul >= 35 && !openTask('flush')) add({ type: 'flush', circ: 'heat', title: 'Промыть ТО отопления', desc: 'Промыть пластинчатый теплообменник отопления реагентом.' });
+    const add = (o) => { addTask(Object.assign({ deadline: dl, plan: true }, o)); made.push(o.title); };
+    // что уже сделано после закрытия сезона — в план не попадает
+    if (!((s.heat.pressOkAt || -1) > from)) add({ type: 'pressTest', title: 'Опрессовка отопления', desc: 'Гидравлические испытания системы отопления на 7,5 бар. Кнопка — в шкафу или у подпитки (насосы стоят, задвижки открыты, система заполнена).' });
+    [0, 1].forEach((i) => { if (!((s.pumps[i].serviced || -1) > from)) add({ type: 'pumpRev', ref: i, title: 'Ревизия насоса ' + s.pumps[i].id, desc: 'Заменить подшипники или уплотнение насоса ' + s.pumps[i].id + ' — перебрать перед зимой.' }); });
+    if (!openTask('cleanFilter') && !((s.heat.cleanedAt || -1) > from)) add({ type: 'cleanFilter', title: 'Почистить грязевик', desc: 'Перед сезоном грязевик должен быть чистым.' });
+    if (s.heat.foul >= 35 && !openFlush('heat')) add({ type: 'flush', circ: 'heat', title: 'Промыть ТО отопления', desc: 'Промыть пластинчатый теплообменник отопления реагентом.' });
     // задвижки, которые к 1 сентября износятся ниже нормы комиссии (40%)
     s.valves.filter((v) => v.pipe <= 2 && (v.cond < 60 || v.broken)).forEach((v) => {
       const i = s.valves.indexOf(v);
       if (!openTask('replaceValve', i)) add({ type: 'replaceValve', ref: i, title: 'Заменить задвижку ' + v.id, desc: 'Задвижка ' + v.id + ' изношена (' + Math.round(v.cond) + '%) — заменить летом, пока отопление стоит. Склад — не больше лимита в месяц.' });
     });
-    msg(BOSS, 'План летнего ремонта до 31 августа: ' + made.join('; ') + '. Первого сентября — комиссия по готовности к зиме!', true);
+    msg(BOSS, (made.length ? 'План летнего ремонта до 31 августа: ' + made.join('; ') + '.' : 'Летний план: всё уже сделано — молодец!') + ' Первого сентября — комиссия по готовности к зиме!', true);
   }
   function commission(s) {
     const r = readinessIssues(s);
@@ -77,7 +78,7 @@ G.Ev = (() => {
     pumpSeal: (k, s) => s.pumps[k.ref].seal < 30,
     replaceValve: (k, s) => s.valves[k.ref].replacedAt >= k.created,
     fixGland: (k, s) => s.valves[k.ref].gland === 0 && !s.valves[k.ref].flange,
-    switchPumps: (k, s) => k.was.every((i) => !s.pumps[i].on) && ['heat', 'gvs'].every((c) => s.pumps.some((p) => p.circ === c && p.on)),
+    switchPumps: (k, s) => k.was.every((i) => !s.pumps[i].on) && k.was.every((i) => s.pumps.some((p) => p.circ === s.pumps[i].circ && p.on)),
     cleanFilter: (k, s) => s.heat.cleanedAt >= k.created,
     flush: (k, s) => s[k.circ].flushedAt >= k.created,
     heat: (k, s) => sustained(k, s.houses[k.ref].tin >= 19.5),
@@ -115,6 +116,7 @@ G.Ev = (() => {
     return k;
   }
   const openTask = (type, ref) => G.S.tasks.find((k) => !k.done && !k.failed && k.type === type && (ref === undefined || k.ref === ref));
+  const openFlush = (c) => G.S.tasks.find((k) => !k.done && !k.failed && k.type === 'flush' && k.circ === c);
   const openTasks = () => G.S.tasks.filter((k) => !k.done && !k.failed);
 
   function xp(n) {
@@ -234,14 +236,25 @@ G.Ev = (() => {
   }
   function hospital() {
     const s = G.S, P = s.p;
-    s.t += 3 * 1440;
-    for (const k of s.tasks) if (k.deadline) k.deadline += 3 * 1440;
+    skipTime(3 * 1440);
     P.health = 65; P.hunger = 70; P.energy = 80; P.mood = 30;
     P.money -= 4000;
     trust(-5);
     s.scene = 'home';
     msg('Поликлиника №3', 'Три дня на больничном. Лекарства обошлись в 4 000 ₽. Питайся и высыпайся!', true);
     msg(BOSS, 'Пока ты болел, на ЦТП подменял Михалыч. Выздоравливай.');
+  }
+
+  // пропуск времени (больничный, отпуск): мир стоит, сроки задач сдвигаются (кроме летнего плана), зарплата приходит
+  function skipTime(mins) {
+    const s = G.S, t0 = s.t;
+    s.t += mins;
+    for (const k of s.tasks) if (k.deadline && !k.plan) k.deadline += mins;
+    s.ev.inspect = null;
+    for (let dd = U.day(t0); dd <= U.day(s.t); dd++) {
+      const at = dd * 1440 + 10 * 60, x = U.date(at);
+      if ((x.d === 5 || x.d === 20) && at > t0 && at <= s.t) payday(x.d);
+    }
   }
 
   function payday(dd) {
@@ -307,7 +320,7 @@ G.Ev = (() => {
       } else if (x.k === 'clog') {
         if (!openTask('cleanFilter')) o = { type: 'cleanFilter', title: 'Почистить грязевик', desc: 'Перепад на грязевике большой — забит. Почистить (контур нужно остановить и сдренировать).', deadline: s.t + 5 * 1440 };
       } else if (x.k === 'foul') {
-        if (!openTask('flush')) o = { type: 'flush', circ: x.c, title: 'Промыть ' + (x.c === 'heat' ? 'ТО отопления' : 'ВВП ГВС'), desc: (x.c === 'heat' ? 'Теплообменник' : 'Подогреватель ГВС') + ' зарос, не держит температуру. Промыть реагентом.', deadline: s.t + 7 * 1440 };
+        if (!openFlush(x.c)) o = { type: 'flush', circ: x.c, title: 'Промыть ' + (x.c === 'heat' ? 'ТО отопления' : 'ВВП ГВС'), desc: (x.c === 'heat' ? 'Теплообменник' : 'Подогреватель ГВС') + ' зарос, не держит температуру. Промыть реагентом.', deadline: s.t + 7 * 1440 };
       }
       if (o) { addTask(o); made++; msg(BOSS, 'Прочитал журнал. ' + o.desc); }
     }
@@ -339,7 +352,7 @@ G.Ev = (() => {
     if (E.hvs && t >= E.hvs.until) { E.hvs = null; msg(ODS, 'Водоканал подал холодную воду, ГВС восстанавливается.'); }
     if (E.netOff) {
       if (!E.netOff.started && t >= E.netOff.from) { E.netOff.started = true; msg('Теплосеть', 'Начались испытания магистрали — горячей воды в квартале нет 10 дней. Жильцы в курсе.', true); }
-      if (t >= E.netOff.until) { E.netOff = null; msg('Теплосеть', 'Испытания окончены, сетевую воду дали. Проверь ГВС: насос, задвижки, температура.', true); }
+      if (t >= E.netOff.until) { E.netOff = null; s.flags.hotGrace = t + 150; msg('Теплосеть', 'Испытания окончены, сетевую воду дали. Проверь ГВС: насос, задвижки, температура.', true); }
     }
     if (E.burst) {
       const B = E.burst;
@@ -381,21 +394,27 @@ G.Ev = (() => {
         msg(BOSS, 'Двадцать третье — снимаем показания теплосчётчиков во всех домах. Три дня тебе.');
       }
       if (d.m === 8 && d.d === 25) msg(BOSS, 'Через неделю отопительный сезон. Проверь насосы и задвижки!');
-      if (d.m === 9 && d.d === 1 && d.y > 2026) {
-        msg(BOSS, 'Приказ: начинаем отопительный сезон! Запускай отопление до вечера: задвижки, давление ~4 бар, насос. Чек-лист — в шкафу.', true);
+    }
+    // ---- сезонные: по дате, а не по минуте — чтобы больничный или отпуск их не перескочили
+    if (m >= 9 * 60) {
+      if (d.m === 9 && d.d <= 3 && d.y > 2026 && s.flags.startYear !== d.y) {
+        s.flags.startYear = d.y;
+        msg(BOSS, 'Приказ: начинаем отопительный сезон! Запускай отопление ' + (m < 12 * 60 ? 'до вечера' : 'как можно скорее') + ': задвижки, давление ~4 бар, насос. Чек-лист — в шкафу.', true);
         s.flags.seasonEnd = false;
+        s.flags.coldGrace = t + 48 * 60; // квартиры за лето остыли — жильцы знают, что отопление пускают, двое суток терпят
         if (!openTask('heatStart')) addTask({ type: 'heatStart', title: 'Пуск отопления', desc: 'Запустить отопление квартала: открыть задвижки Т1/Т2, подпитать до ~4 бар, запустить Н1 или Н2.', deadline: t + 9 * 60 });
         U.pick([[0, 2, 4], [1, 3], [0, 3, 4], [2, 4]]).forEach((i) => { s.houses[i].air = 1; });
       }
-      if (d.m === 4 && d.d === 18 && s.flags.planYear !== d.y) { s.flags.planYear = d.y; summerPlan(s); }
-      if (d.m === 5 && d.d === 1 && !E.netOff) {
+      if ((d.m === 4 && d.d >= 18 || d.m === 5) && s.flags.seasonEnd && s.flags.planYear !== d.y) { s.flags.planYear = d.y; summerPlan(s); }
+      if (d.m === 5 && !E.netOff && s.flags.netOffYear !== d.y) {
+        s.flags.netOffYear = d.y;
         const from = t + U.rint(2, 19) * 1440;
         E.netOff = { from, until: from + 10 * 1440, started: false };
         msg('Теплосеть', 'Плановые гидравлические испытания магистрали: с ' + U.dateStr(from) + ' горячей воды не будет 10 дней. Лучшее время перебрать ВВП и насосы ГВС.');
       }
     }
     if (m === 10 * 60 && (d.d === 5 || d.d === 20)) payday(d.d);
-    if (m === 10 * 60 && d.m === 8 && d.d === 1 && d.y > 2026) commission(s);
+    if (m >= 10 * 60 && d.m === 8 && d.d <= 5 && d.y > 2026 && s.flags.commYear !== d.y) { s.flags.commYear = d.y; commission(s); }
     if (m === 0) {
       let avg = 0;
       s.houses.forEach((h) => { avg += h.sat; });
@@ -405,9 +424,10 @@ G.Ev = (() => {
       s.p.readToday = 0;
       if (d.m !== s.sklad.month) { s.sklad.month = d.m; s.sklad.spent = 0; }
     }
-    if (m === 12 * 60 && d.m === 4 && d.d === 15 && !s.flags.seasonEnd) {
+    if (!s.flags.seasonEnd && (d.m === 4 && (d.d > 15 || (d.d === 15 && m >= 12 * 60)) || (d.m > 4 && d.m < 9))) {
       s.flags.seasonEnd = true;
       s.flags.summerFrom = t;
+      s.flags.coldGrace = tOf(s, 9, 3, 9); // осенью до пуска отопления на холод не жалуются
       s.p.money += 15000;
       msg(BOSS, 'Отопительный сезон закрыт! Держи премию 15 000 ₽. Останови насосы отопления — летом ремонтная кампания, план пришлю.', true);
       if (!openTask('heatOff')) addTask({ type: 'heatOff', title: 'Остановить отопление', desc: 'Сезон закрыт: остановить насосы отопления Н1/Н2.', deadline: t + 2 * 1440 });
@@ -479,5 +499,5 @@ G.Ev = (() => {
   }
 
   return { readinessIssues, msg, alarm, addTask, openTask, openTasks, xp, trust, mood, rankIdx, complaints, pumpBroke, blowout, passOut,
-    hospital, startGame, tick, BOSS, ODS };
+    hospital, skipTime, startGame, tick, BOSS, ODS };
 })();

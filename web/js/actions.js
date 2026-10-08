@@ -256,18 +256,20 @@ G.Act = (() => {
         if (v.pipe > 2) return;
         if (v.gland) defects.push('течь по сальнику ' + v.id);
         if (v.flange) defects.push('течь по фланцу ' + v.id);
-        else if (v.cond < 40 && Math.random() < 0.6) { v.flange = 1; defects.push('не выдержал фланец ' + v.id + ' — задвижка старая'); }
+        else if (v.cond < 40) { v.flange = 1; defects.push('не выдержал фланец ' + v.id + ' — задвижка старая'); }
       });
       s.pumps.forEach((p) => { if (p.circ === 'heat' && p.seal >= 60) { p.seal = Math.max(p.seal, 76); defects.push('потекло уплотнение насоса ' + p.id); } });
       s.houses.forEach((h, i) => { if (h.leak) defects.push('течь стояка в подвале ' + D.HOUSES[i].name.replace('Дом', 'дома')); });
       const drop = 0.04 + defects.length * 0.18 + Math.random() * 0.04;
-      const ok = !defects.length;
+      const ok = !defects.length, first = !((s.heat.pressOkAt || -1) > (s.flags.summerFrom || 0));
       if (ok) {
         s.heat.pressOkAt = s.t;
-        s.stats.repairs++;
-        Ev.xp(40); Ev.mood(8);
-        Ev.msg(Ev.BOSS, 'Акт гидравлических испытаний подписан: 7,5 бар, падение ' + drop.toFixed(2) + ' бар за 10 минут. Молодец!');
-      } else { Ev.xp(10); Ev.mood(-4); }
+        if (first) {
+          s.stats.repairs++;
+          Ev.xp(40); Ev.mood(8);
+          Ev.msg(Ev.BOSS, 'Акт гидравлических испытаний подписан: 7,5 бар, падение ' + drop.toFixed(2) + ' бар за 10 минут. Молодец!');
+        }
+      } else { if (first) Ev.xp(10); Ev.mood(-4); }
       s.heat.ps = 4.1;
       G.UI.pressReport(ok, drop, defects);
     });
@@ -280,9 +282,7 @@ G.Act = (() => {
     const pay = Math.round(D.RANKS[Ev.rankIdx()].salary * 0.45);
     P.vacYear = d.y;
     P.money += pay; s.stats.earned += pay;
-    s.t += 14 * 1440;
-    for (const k of s.tasks) if (k.deadline) k.deadline += 14 * 1440;
-    if (s.ev.netOff) { s.ev.netOff.from += 14 * 1440; s.ev.netOff.until += 14 * 1440; }
+    Ev.skipTime(14 * 1440);
     P.energy = 100; P.hunger = 80; P.health = Math.min(100, P.health + 25);
     Ev.mood(40);
     G.Main.enter('home');

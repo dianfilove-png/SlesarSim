@@ -441,6 +441,8 @@ G.UI = (() => {
         kv(b, 'Акт опрессовки', ok ? 'подписан' : 'нет', ok ? 'ok' : 'warn');
         const iss = G.Ev.readinessIssues(s);
         kv(b, 'Готовность к зиме', iss.length ? 'замечаний: ' + iss.length : 'всё готово', iss.length ? 'warn' : 'ok');
+        const plan = G.Ev.openTasks().filter((k) => k.plan).length;
+        if (plan) kv(b, 'Летний план', 'осталось задач: ' + plan + ' (до 31 августа)', 'warn');
         iss.slice(0, 6).forEach((x) => para(b, '• ' + x, true));
         pressBtn(b);
       }
@@ -472,8 +474,8 @@ G.UI = (() => {
 
   function pressBtn(b) {
     if (G.Sim.heatSeason(G.S.t)) return;
-    const r = A().pressReasons();
-    btn(b, 'Опрессовка отопления (гидроиспытания)', () => A().pressTest(), { cls: r.length ? 'warn' : 'main', sub: reqSub(r, '7,5 бар, 10 минут · около ' + dur(48)) });
+    const r = A().pressReasons(), signed = (G.S.heat.pressOkAt || -1) > (G.S.flags.summerFrom || 0);
+    btn(b, 'Опрессовка отопления (гидроиспытания)', () => A().pressTest(), { cls: r.length ? 'warn' : signed ? 'ghost' : 'main', sub: reqSub(r, (signed ? 'акт уже подписан · ' : '') + '7,5 бар, 10 минут · около ' + dur(48)) });
   }
   function pressReport(ok, drop, defects) {
     panel('Гидравлические испытания', (b) => {
