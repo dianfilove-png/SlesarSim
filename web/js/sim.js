@@ -35,11 +35,21 @@ G.Sim = (() => {
   const circPumps = (S, c) => S.pumps.filter((p) => p.circ === c);
   // пороги давления отопления (статика, бар): норма P_LOW..P_HIGH, подпитку закрывать с P_CLOSE
   const P_LOW = 3.5, P_CLOSE = 4, P_WARN = 4.6, P_HIGH = 5, FEED_RATE = 0.06;
+  // тепловые камеры перед домами: открыто ли ответвление контура c ('heat' | 'gvs') на дом i
+  const wellOpen = (S, i, c) => D.WELL_PIPES[c].every((k) => S.wells[i].v[k].open);
+  // доля порыва, которая ещё течёт: обе задвижки открыты — 1, одна закрыта — подсос с другой трубы, обе — 0
+  const burstLeakK = (S) => {
+    const B = S.ev.burst;
+    if (!B) return 0;
+    const n = D.WELL_PIPES[B.pipe].filter((k) => S.wells[B.house].v[k].open).length;
+    return n === 2 ? 1 : n === 1 ? 0.33 : 0;
+  };
+  const burstIsolated = (S) => !!S.ev.burst && burstLeakK(S) === 0;
   // все утечки отопления, бар/ч: ЦТП, подвалы домов, порыв теплотрассы
   const heatLeak = (S) => {
     let leak = leakOf(S, 'heat');
-    for (const h of S.houses) if (h.leak) leak += 0.06;
-    if (S.ev.burst && !S.ev.burst.isolated) leak += 3;
+    S.houses.forEach((h, i) => { if (h.leak && wellOpen(S, i, 'heat')) leak += 0.06; });
+    if (S.ev.burst && S.ev.burst.pipe === 'heat') leak += 3 * burstLeakK(S);
     return leak;
   };
   // чистое изменение давления отопления при открытой подпитке, бар/мин
@@ -67,7 +77,8 @@ G.Sim = (() => {
   function circuitHeat(S, season) {
     const H = S.heat;
     const head = headOf(S, 'heat');
-    const open = pipeOpen(S, 1) && pipeOpen(S, 2);
+    // все дома отсечены в камерах — насосу некуда качать, как на закрытую задвижку
+    const open = pipeOpen(S, 1) && pipeOpen(S, 2) && S.wells.some((w, i) => wellOpen(S, i, 'heat'));
     const air = U.clamp((H.ps - 0.6) / 1.2, 0, 1);
     const q = head * (open ? 1 : 0) * (1 - H.clog / 100 * 0.75) * air;
     H.q += (q - H.q) * 0.3;
@@ -137,15 +148,18 @@ G.Sim = (() => {
     const W = S.gvs;
     const head = headOf(S, 'gvs');
     const open3 = pipeOpen(S, 3), open4 = pipeOpen(S, 4);
+    // порыв на вводе ГВС: давление падает, ВВП не успевает греть такой расход
+    const gb = S.ev.burst && S.ev.burst.pipe === 'gvs' ? burstLeakK(S) : 0;
     if (W.drain) W.ps += (0 - W.ps) * 0.2;
-    else if (!S.ev.hvs) W.ps += (4.6 - leakOf(S, 'gvs') * 0.4 - W.ps) * 0.15;
-    else W.ps = Math.max(0, W.ps - 0.004 - draw * 0.02);
-    const circ = head * (open3 && open4 ? 1 : 0) * (W.ps > 1 ? 1 : 0);
+    else if (!S.ev.hvs) W.ps += (4.6 - leakOf(S, 'gvs') * 0.4 - gb * 2.2 - W.ps) * 0.15;
+    else W.ps = Math.max(0, W.ps - 0.004 - draw * 0.02 - gb * 0.02);
+    const loop = S.wells.some((w, i) => wellOpen(S, i, 'gvs'));
+    const circ = head * (open3 && open4 && loop ? 1 : 0) * (W.ps > 1 ? 1 : 0);
     W.q += (circ - W.q) * 0.3;
     if (W.q < 0.001) W.q = 0;
     const hasWater = W.ps > 1 && open3;
     const maxT = S.tnet - 3 - W.foul * 0.15;
-    const goal = hasWater ? Math.min(W.set, maxT) : 20;
+    const goal = hasWater ? Math.min(W.set, maxT) - gb * 12 : 20;
     W.t3 += (goal - W.t3) * (hasWater ? 0.08 : 0.01);
     const t4goal = hasWater ? W.t3 - (W.q > 0.3 ? 6 : 22) : 20;
     W.t4 += (t4goal - W.t4) * 0.05;
@@ -160,7 +174,7 @@ G.Sim = (() => {
           G.Ev.alarm('Насос ' + p.id + ' всухую — нет давления в ГВС! ' + (S.ev.hvs ? 'Стоп насос и жди водоканал.' : W.drain ? 'Стоп насос, закрой дренаж ГВС.' : 'Стоп насос.'));
         }
       } else p.dryMsg = false;
-      if (!(open3 && open4)) {
+      if (!(open3 && open4 && loop)) {
         wearRun(p, 0.01, 0.04);
         if (!p.deadMsg) { p.deadMsg = true; G.Ev.alarm('Насос ' + p.id + ' работает на закрытую задвижку!'); }
       } else p.deadMsg = false;
@@ -176,8 +190,9 @@ G.Sim = (() => {
     const gvsOK = W.ps > 1 && pipeOpen(S, 3);
     const night = h < 6 || h >= 23;
     for (let i = 0; i < S.houses.length; i++) {
-      const hd = D.HOUSES[i], hs = S.houses[i];
-      const qh = hs.cutoff ? 0 : H.q * hd.dist;
+      const hd = D.HOUSES[i], hs = S.houses[i], wv = S.wells[i].v;
+      const heatOn = wellOpen(S, i, 'heat');
+      const qh = heatOn ? H.q * hd.dist : 0;
       const t1h = H.t1 - (1 - hd.dist) * 10;
       const tavg = (t1h + H.t2) / 2;
       const kRad = 0.718 * Math.pow(U.clamp(qh, 0, 1.1), 0.35) * (hs.air ? 0.82 : 1);
@@ -186,9 +201,9 @@ G.Sim = (() => {
       hs.tin += 0.0006 * (heatIn + 3 - loss);
 
       let tt;
-      if (!gvsOK) tt = 12;
+      if (!gvsOK || !wv[2].open) tt = 12;
       else {
-        const circOK = W.q > 0.3;
+        const circOK = W.q > 0.3 && wv[3].open;
         const l = circOK ? 2 + (1 - hd.dist) * 25 : (8 + (1 - hd.dist) * 120) * (1 - 0.6 * draw);
         tt = W.t3 - l;
       }
@@ -197,7 +212,8 @@ G.Sim = (() => {
       const cold = season && S.t >= (S.flags.coldGrace || 0) ? Math.max(0, 18.5 - hs.tin) : 0;
       const hot = Math.max(0, hs.tin - 26) * 0.6;
       const noHot = S.ev.hvs || (S.ev.netOff && S.ev.netOff.started) || S.t < (S.flags.hotGrace || 0) ? 0 : Math.max(0, 52 - hs.ttap) / 8 * (night ? 0.3 : 1);
-      const bad = cold + hot + noHot + (hs.leak ? 0.5 : 0) + (hs.air ? 0.4 : 0) + (hs.cutoff ? 0.5 : 0);
+      const cut = (season && !heatOn ? 0.3 : 0) + (wv[2].open && wv[3].open ? 0 : 0.2);
+      const bad = cold + hot + noHot + (hs.leak ? 0.5 : 0) + (hs.air ? 0.4 : 0) + cut;
       hs.sat = U.clamp(hs.sat + (bad > 0.05 ? -bad * 0.004 : 0.003), 0, 100);
       G.Ev.complaints(i, cold, hot, noHot, night);
     }
@@ -267,6 +283,6 @@ G.Sim = (() => {
     G.Ev.tick(S, season);
   }
 
-  return { step, netReturn, heatLeak, feedNetRate, P_LOW, P_CLOSE, P_WARN, P_HIGH, FEED_RATE, seasonal, heatSeason, tSched, drawProfile, pumpEff, headOf, pipeOpen, leakOf, sealLeak,
+  return { step, netReturn, heatLeak, wellOpen, burstLeakK, burstIsolated, feedNetRate, P_LOW, P_CLOSE, P_WARN, P_HIGH, FEED_RATE, seasonal, heatSeason, tSched, drawProfile, pumpEff, headOf, pipeOpen, leakOf, sealLeak,
     valveLeak, flangeLeak, circPumps, anyOn, GLAND };
 })();

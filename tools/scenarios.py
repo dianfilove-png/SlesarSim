@@ -74,6 +74,33 @@ def main():
         shot(page, '12_shop')
         page.evaluate("G.S.house=2; G.Main.enter('house')")
         shot(page, '13_basement')
+        # тепловая камера: порыв у дома №3, люк, спуск, перекрытие ввода
+        page.evaluate("G.UI.closePanel(); G.S.ev.burst={house:2,pipe:'heat',at:G.S.t,called:null,arrived:false,fixAt:null}; G.S.px=G.D.wellX(2); G.Main.enter('street'); G.R.cam.street=G.D.wellX(2)-400")
+        page.wait_for_timeout(500)
+        page.evaluate("G.UI.panelHatch(2)")
+        shot(page, '13a_hatch')
+        page.evaluate("G.UI.closePanel(); G.S.p.health=90; G.Act.wellDown(2); G.Main.advance(5)")
+        shot(page, '13b_well_steam', True)
+        hp = page.evaluate("G.S.p.health")
+        assert hp < 90, 'ожог в камере с порывом не сработал'
+        page.evaluate("G.S.wells[2].v.forEach(v=>{v.stuck=false; v.lastOp=G.S.t}); G.Act.wellToggle(2,0); G.Main.advance(8); G.Act.wellToggle(2,1); G.Main.advance(8)")
+        iso = page.evaluate("[G.Sim.burstIsolated(G.S), G.S.wells[2].v.map(v=>v.open), G.Sim.heatLeak(G.S).toFixed(2)]")
+        print('well isolate:', iso)
+        assert iso[0], 'порыв не отсечён задвижками камеры'
+        page.evaluate("G.UI.panelWell(2)")
+        shot(page, '13c_well_panel')
+        page.evaluate("G.S.ev.burst.called=G.S.t; G.Main.advance(45)")
+        assert page.evaluate("G.S.ev.burst.arrived && G.S.ev.burst.fixAt - G.S.t > 200"), 'бригада не приехала'
+        page.evaluate("G.Main.advance(310)")
+        tk = page.evaluate("[!G.S.ev.burst, G.S.tasks.filter(k=>k.type==='wellOpen'&&!k.done&&!k.failed).length]")
+        print('after repair:', tk)
+        assert tk == [True, 1], 'нет задачи открыть задвижки после ремонта'
+        page.evaluate("G.UI.closePanel(); G.Act.wellToggle(2,0); G.Main.advance(8); G.Act.wellToggle(2,1); G.Main.advance(8)")
+        assert page.evaluate("G.S.tasks.some(k=>k.type==='wellOpen'&&k.done)"), 'задача открыть задвижки не закрылась'
+        page.evaluate("G.UI.closePanel(); G.Main.exit()")
+        page.wait_for_timeout(500)
+        shot(page, '13d_street_wells')
+        page.evaluate("G.S.heat.ps=4.1")
         # долгая симуляция: 30 дней
         page.evaluate("G.UI.closePanel(); G.S.valves.forEach(v=>{v.open=true}); G.S.gvs.drain=false; G.S.pumps[0].on=true; G.S.pumps[2].on=true;")
         for d in range(30):

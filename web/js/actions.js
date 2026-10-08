@@ -433,6 +433,90 @@ G.Act = (() => {
     });
   }
 
+  // ---------- тепловые камеры перед домами
+  const TK = (i) => 'ТК-' + (i + 1);
+  const WPIPE = ['Т1', 'Т2', 'Т3', 'Т4'];
+  // шанс закиснуть: задвижки в камерах годами не трогают
+  const wellStickP = (v) => 0.04 + U.clamp((G.S.t - v.lastOp) / 1440 - 30, 0, 300) / 1000;
+  function wellDown(i) {
+    const s = G.S, B = s.ev.burst;
+    busy('Поддеваю люк крюком, спускаюсь в камеру ' + TK(i), 4, { work: 0.04 }, () => {
+      s.well = i;
+      G.Main.enter('well');
+      if (B && B.house === i && !Sim.burstIsolated(s)) {
+        s.p.health = Math.max(1, s.p.health - 8); Ev.mood(-4);
+        toast('Внизу пар и кипяток по щиколотку — ошпарился! Закрывай ' + (B.pipe === 'heat' ? 'Т1 и Т2' : 'Т3 и Т4') + ' и наверх.', 'bad');
+      }
+    });
+  }
+  // после закрытия задвижки: порыв на этом вводе отсечён?
+  function checkIsolated(i) {
+    const s = G.S, B = s.ev.burst;
+    if (!B || B.house !== i || !Sim.burstIsolated(s)) return;
+    toast('Порыв отсечён — вода больше не уходит!', 'good');
+    if (!B.arrived && !B.selfIso) {
+      B.selfIso = true;
+      Ev.xp(15); Ev.trust(2); Ev.mood(5);
+      Ev.msg(Ev.ODS, 'Слесарь сам перекрыл ввод в камере ' + TK(i) + ' — молодец, оперативно!' + (B.called === null ? ' Бригаду-то вызвал?' : ''));
+    }
+  }
+  function wellToggle(i, k) {
+    const s = G.S, v = s.wells[i].v[k];
+    if (v.broken) return toast('Шпиндель сорван — эту задвижку заменят подрядчики', 'bad');
+    if (v.stuck) return toast('Задвижка закисла и не проворачивается', 'bad');
+    const closing = v.open;
+    busy((closing ? 'Закрываю ' : 'Открываю ') + WPIPE[k] + ' в ' + TK(i) + ' — тесно, штурвал тугой…', 6, { work: 0.07 }, () => {
+      if (Math.random() < wellStickP(v)) {
+        v.stuck = true;
+        toast('Задвижка ' + WPIPE[k] + ' закисла — штурвал ни в какую! Нужна WD-40.', 'bad');
+        return;
+      }
+      v.open = !v.open;
+      v.lastOp = s.t;
+      toast(WPIPE[k] + ' на ' + D.HOUSES[i].name.replace('Дом', 'дом') + (v.open ? ' открыта' : ' закрыта'));
+      if (!v.open) checkIsolated(i);
+    });
+  }
+  function wellUnstick(i, k, method) {
+    const s = G.S, w = s.wells[i], v = w.v[k];
+    if (method === 'wd') {
+      if (!has('wd40')) return toast('Нет WD-40', 'bad');
+      take('wd40');
+      busy('Брызгаю WD-40 на шпиндель и расхаживаю штурвал', 15, { work: 0.08 }, () => {
+        if (Math.random() < 0.7 + Ev.rankIdx() * 0.05) { v.stuck = false; v.lastOp = s.t; toast('Пошла! ' + WPIPE[k] + ' в ' + TK(i) + ' крутится.', 'good'); Ev.xp(5); }
+        else toast('Не идёт. Дай смазке впитаться и попробуй ещё.', 'bad');
+      });
+    } else {
+      busy('Тяну штурвал газовым ключом с трубой', 10, { work: 0.2 }, () => {
+        const r = Math.random();
+        if (r < 0.5) { v.stuck = false; v.lastOp = s.t; toast('Сорвал с места! ' + WPIPE[k] + ' крутится.', 'good'); }
+        else if (r < 0.66) {
+          v.broken = true; v.stuck = false;
+          if (w.fixAt === null) w.fixAt = U.nextAt(s.t + 12 * 60, 14 * 60);
+          Ev.mood(-6);
+          toast('Хрясь! Сорвал шпиндель ' + WPIPE[k] + '.', 'bad');
+          Ev.msg(Ev.BOSS, 'Сорвал шпиндель в ' + TK(i) + '? Вызову подрядчиков, заменят ' + U.dateStr(w.fixAt) + ' к ' + U.clock(w.fixAt) + '.');
+        } else toast('Не поддаётся…', 'bad');
+      });
+    }
+  }
+  // ревизия: закрыть и открыть каждую задвижку, чтобы не закисали
+  function wellRevise(i) {
+    const s = G.S, w = s.wells[i];
+    if (w.v.some((v) => !v.open)) return toast('Сначала открой все задвижки — ревизия на работающей камере', 'bad');
+    busy('Ревизия ' + TK(i) + ': расхаживаю задвижки, смазываю шпиндели', 25, { work: 0.08 }, () => {
+      const bad = [];
+      w.v.forEach((v, k) => {
+        if (v.broken) { bad.push(WPIPE[k] + ' — сорван шпиндель'); return; }
+        if (v.stuck) { bad.push(WPIPE[k] + ' — закисла'); return; }
+        if (Math.random() < wellStickP(v) * 0.4) { v.stuck = true; bad.push(WPIPE[k] + ' — закисла'); return; }
+        v.lastOp = s.t;
+      });
+      if (!bad.length) { w.revAt = s.t; Ev.xp(8); toast('Ревизия ' + TK(i) + ': все четыре задвижки ходят. Записал в журнал.', 'good'); }
+      else toast('Ревизия ' + TK(i) + ' не закончена: ' + bad.join(', ') + '.', 'bad');
+    });
+  }
+
   // ---------- магазин и склад
   function shopOpen() { const h = U.hour(G.S.t); return h >= 8 && h < 22; }
   function buy(id) {
@@ -466,5 +550,5 @@ G.Act = (() => {
   return { inv, has, tool, dur, isoReasons, dryReasons, needItems, valveToggle, valveUnstick, valveTighten, valveRepack,
     valveReplace, valveRegasket, pumpStart, pumpStop, pumpLube, pumpBearings, pumpSeal, drain, feed, corr, gvsSet,
     cleanFilter, flush, installReg, obhod, eat, machineCoffee, sleep, tv, shower, read, fishing, bleedAir, clampLeak,
-    meter, job, callBrigade, talk, shopOpen, buy, order, circName, take, pressReasons, pressTest, vacation };
+    meter, job, callBrigade, talk, wellDown, wellToggle, wellUnstick, wellRevise, wellStickP, shopOpen, buy, order, circName, take, pressReasons, pressTest, vacation };
 })();

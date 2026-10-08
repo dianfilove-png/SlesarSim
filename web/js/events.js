@@ -12,7 +12,11 @@ G.Ev = (() => {
     cleanFilter: [40, 3], flush: [60, 4], heat: [15, 2], overheat: [12, 1], hot: [15, 2], air: [15, 1],
     leak: [20, 2], meter: [8, 1], job: [10, 0], pumpFix: [40, 3], restart: [10, 1], burst: [30, 3],
     bearings: [35, 3], pumpSeal: [30, 3], heatOff: [5, 1], pressTest: [50, 4], pumpRev: [35, 3], readiness: [30, 4], heatStart: [30, 3],
+    wellOpen: [10, 1], wellRev: [40, 3],
   };
+  const TK = (i) => 'ТК-' + (i + 1);
+  const before = (i) => D.HOUSES[i].name.replace('Дом', 'домом');
+  const pipesOf = (c) => (c === 'heat' ? 'Т1 и Т2' : 'Т3 и Т4');
   // ---------- лето: готовность к сезону
   function readinessIssues(s) {
     const r = [];
@@ -43,6 +47,7 @@ G.Ev = (() => {
     if (!((s.heat.pressOkAt || -1) > from)) add({ type: 'pressTest', title: 'Опрессовка отопления', desc: 'Гидравлические испытания системы отопления на 7,5 бар. Кнопка — в шкафу или у подпитки (насосы стоят, задвижки открыты, система заполнена).' });
     [0, 1].forEach((i) => { if (!((s.pumps[i].serviced || -1) > from)) add({ type: 'pumpRev', ref: i, title: 'Ревизия насоса ' + s.pumps[i].id, desc: 'Заменить подшипники или уплотнение насоса ' + s.pumps[i].id + ' — перебрать перед зимой.' }); });
     if (!openTask('cleanFilter') && !((s.heat.cleanedAt || -1) > from)) add({ type: 'cleanFilter', title: 'Почистить грязевик', desc: 'Перед сезоном грязевик должен быть чистым.' });
+    if (!s.wells.every((w) => w.revAt > from) && !openTask('wellRev')) add({ type: 'wellRev', from, title: 'Ревизия тепловых камер', desc: 'Спуститься в камеры ТК-1…ТК-5 (люки перед домами) и расходить задвижки, чтобы при порыве не закисли. Закисшие — WD-40.' });
     if (s.heat.foul >= 35 && !openFlush('heat')) add({ type: 'flush', circ: 'heat', title: 'Промыть ТО отопления', desc: 'Промыть пластинчатый теплообменник отопления реагентом.' });
     // задвижки, которые к 1 сентября износятся ниже нормы комиссии (40%)
     s.valves.filter((v) => v.pipe <= 2 && (v.cond < 60 || v.broken)).forEach((v) => {
@@ -63,7 +68,7 @@ G.Ev = (() => {
     }
   }
 
-  const FAIL = { heat: 4, overheat: 2, hot: 4, air: 2, leak: 3, meter: 2, job: 0, obhod: 0, restart: 3, burst: 6, switchPumps: 2, lube: 3 };
+  const FAIL = { heat: 4, overheat: 2, hot: 4, air: 2, leak: 3, meter: 2, job: 0, obhod: 0, restart: 3, burst: 6, switchPumps: 2, lube: 3, wellOpen: 3, wellRev: 3 };
   const EMERGENCY = ['heat', 'hot', 'pumpFix', 'restart', 'burst', 'leak'];
 
   const sustained = (k, ok) => {
@@ -96,6 +101,8 @@ G.Ev = (() => {
     pumpRev: (k, s) => (s.pumps[k.ref].serviced || -1) >= k.created,
     readiness: (k, s) => readinessIssues(s).length === 0,
     heatStart: (k, s) => s.heat.q > 0.5 && s.heat.t1 > 38,
+    wellOpen: (k, s) => G.Sim.wellOpen(s, k.ref, k.circ),
+    wellRev: (k, s) => s.wells.every((w) => w.revAt > (k.from === undefined ? k.created : k.from)),
   };
 
   function msg(from, text, urgent) {
@@ -171,6 +178,10 @@ G.Ev = (() => {
       s.ev.burst.called = s.t;
       msg(ODS, 'Аварийную бригаду на порыв вызвали сами. Почему слесарь не сообщил?!');
     }
+    if (k.type === 'wellOpen') {
+      D.WELL_PIPES[k.circ].forEach((n) => Object.assign(s.wells[k.ref].v[n], { open: true, stuck: false, broken: false, lastOp: s.t }));
+      msg(BOSS, 'Михалыч открыл за тебя задвижки в ' + TK(k.ref) + ' — дом без ' + (k.circ === 'heat' ? 'тепла' : 'горячей воды') + ' сидел!');
+    }
   }
 
   function checkTasks(s) {
@@ -195,7 +206,9 @@ G.Ev = (() => {
     const who = U.pick(D.NAMES);
     const apt = U.rint(1, hd.apts);
     msg(who + ', ' + hd.name + ', кв. ' + apt, c.text, type !== 'air');
-    addTask({ type, ref: i, title: c.title + ': ' + hd.name, desc: c.text, deadline: s.t + c.dl, who });
+    // дом отсечён на время ремонта порыва — жильцов предупредили, спрос мягче
+    const ex = s.ev.burst && s.ev.burst.house === i ? { excuse: true } : {};
+    addTask(Object.assign({ type, ref: i, title: c.title + ': ' + hd.name, desc: c.text, deadline: s.t + c.dl, who }, ex));
     s.stats.complaints++;
   }
   function complaints(i, cold, hot, noHot, night) {
@@ -355,16 +368,32 @@ G.Ev = (() => {
       if (t >= E.netOff.until) { E.netOff = null; s.flags.hotGrace = t + 150; msg('Теплосеть', 'Испытания окончены, сетевую воду дали. Проверь ГВС: насос, задвижки, температура.', true); }
     }
     if (E.burst) {
-      const B = E.burst;
-      if (B.called !== null && !B.isolated && t >= B.called + 40) {
-        B.isolated = true; s.houses[B.house].cutoff = true; B.fixAt = t + 360;
-        msg('Аварийная бригада', 'Перекрыли участок теплотрассы к ' + D.HOUSES[B.house].name.replace('Дом', 'дому') + '. Копаем, часов шесть. Подпитай систему!', true);
+      const B = E.burst, tk = TK(B.house), iso = G.Sim.burstIsolated(s);
+      // аварийка перекрывает ответвление сама — теми же задвижками в камере перед домом
+      const close = () => D.WELL_PIPES[B.pipe].forEach((n) => Object.assign(s.wells[B.house].v[n], { open: false, stuck: false, broken: false, lastOp: t }));
+      if (B.called !== null && !B.arrived && t >= B.called + 40) {
+        B.arrived = true;
+        B.fixAt = t + (iso ? 300 : 360);
+        if (!iso) close();
+        msg('Аварийная бригада', iso ? 'Приехали. Задвижки в камере ' + tk + ' уже закрыты — молодец, слесарь! Копаем, часов пять.'
+          : 'Спустились в камеру ' + tk + ' перед ' + before(B.house) + ', перекрыли ' + pipesOf(B.pipe) + '. Копаем, часов шесть.' + (B.pipe === 'heat' ? ' Подпитай систему!' : ''), true);
+      } else if (B.arrived && !iso) {
+        close(); trust(-3);
+        msg('Аварийная бригада', 'Кто открыл задвижки в ' + tk + '?! Нас в котловане кипятком окатило! Закрыли обратно.', true);
       }
-      if (B.isolated && t >= B.fixAt) {
-        s.houses[B.house].cutoff = false; E.burst = null;
-        msg('Аварийная бригада', 'Порыв заварили, участок открыт. Проверь давление в отоплении.', true);
+      if (B.arrived && t >= B.fixAt) {
+        E.burst = null;
+        msg('Аварийная бригада', 'Порыв заварили, яму засыпали. Задвижки в камере ' + tk + ' оставили закрытыми — спустись и открой ' + pipesOf(B.pipe) + (B.pipe === 'heat' ? ', потом проверь давление в отоплении.' : '.'), true);
+        if (!openTask('wellOpen', B.house)) addTask({ type: 'wellOpen', ref: B.house, circ: B.pipe, title: 'Открыть задвижки в ' + tk, desc: 'Порыв устранён. Спуститься в камеру ' + tk + ' (люк на тротуаре перед ' + before(B.house) + ') и открыть ' + pipesOf(B.pipe) + ' — дом сидит без ' + (B.pipe === 'heat' ? 'отопления' : 'горячей воды') + '.', deadline: t + 180, excuse: false });
       }
     }
+    // сорванный шпиндель в камере меняют подрядчики
+    s.wells.forEach((w, i) => {
+      if (w.fixAt === null || t < w.fixAt) return;
+      w.fixAt = null;
+      w.v.forEach((v) => { if (v.broken) Object.assign(v, { broken: false, stuck: false, lastOp: t }); });
+      msg(BOSS, 'Подрядчики заменили задвижку в камере ' + TK(i) + '. Положение оставили как было — проверь.');
+    });
     if (E.inspect && t >= E.inspect.at) inspectionResult();
     if (s.wx.snap && t >= s.wx.snap.until) s.wx.snap = null;
 
@@ -456,11 +485,15 @@ G.Ev = (() => {
       E.hvs = { until: t + U.rint(120, 360) };
       msg(ODS, 'Водоканал отключил холодную воду в квартале — горячей тоже не будет. Подпитка отопления невозможна.', true);
     }
-    if (season && !E.burst && per(0.012)) {
-      const i = U.rint(0, 4);
-      E.burst = { house: i, at: t, called: null, isolated: false, fixAt: null };
-      msg(U.pick(D.NAMES) + ', ' + D.HOUSES[i].name, 'Возле нашего дома из-под земли валит пар! Порыв!', true);
-      addTask({ type: 'burst', ref: i, title: 'Порыв теплотрассы у ' + D.HOUSES[i].name.replace('Дом', 'дома'), desc: 'Подойти к дому и вызвать аварийную бригаду (или по телефону). Следить за давлением — подпитка!', deadline: t + 120 });
+    // порыв на вводе в дом: отопление — только в сезон, ГВС — круглый год (кроме летнего отключения)
+    const heatBurst = season && per(0.012);
+    if (!E.burst && (heatBurst || (!(E.netOff && E.netOff.started) && per(0.005)))) {
+      const i = U.rint(0, 4), pipe = heatBurst ? 'heat' : 'gvs', hn = D.HOUSES[i].name.replace('Дом', 'дома');
+      E.burst = { house: i, pipe, at: t, called: null, arrived: false, fixAt: null };
+      msg(U.pick(D.NAMES) + ', ' + D.HOUSES[i].name, pipe === 'heat' ? 'Возле нашего дома из-под земли валит пар! Порыв!' : 'У нас перед домом из-под асфальта бьёт горячая вода, всё в пару! Порыв!', true);
+      addTask({ type: 'burst', ref: i, title: (pipe === 'heat' ? 'Порыв теплотрассы у ' : 'Порыв ГВС у ') + hn,
+        desc: 'Вызвать аварийную бригаду (у дома или по телефону). Чтобы не терять воду — спуститься в камеру ' + TK(i) + ' (люк перед домом) и закрыть ' + pipesOf(pipe) + ' на ответвлении. ' +
+          (pipe === 'heat' ? 'Следить за давлением — подпитка!' : 'Пока хлещет — в квартале падает давление и температура горячей воды.'), deadline: t + 120 });
     }
     if (wd && m >= 9 * 60 && m <= 15 * 60 && !E.inspect && s.flags.lastInspect !== day && per(0.12, 360)) {
       s.flags.lastInspect = day;

@@ -186,7 +186,7 @@ G.R = (() => {
     rr(bx - bw / 2, by - 13, bw, 24, 7); ctx.fillStyle = 'rgba(14,20,30,.82)'; ctx.fill();
     circle(bx - bw / 2 + 10, by - 1, 4.5, hs.sat > 60 ? '#5cd65c' : hs.sat > 35 ? '#f0c040' : '#f05040');
     text(lbl, bx + 5, by - 1, 13, (season && hs.tin < 18.5) || hs.ttap < 50 ? '#ff9a8a' : '#e8f0ff', 'center', true, false);
-    const tasks = G.S.tasks.filter((k) => !k.done && !k.failed && k.ref === hd.id - 1 && ['heat', 'hot', 'overheat', 'air', 'leak', 'meter', 'job', 'burst'].includes(k.type));
+    const tasks = G.S.tasks.filter((k) => !k.done && !k.failed && k.ref === hd.id - 1 && ['heat', 'hot', 'overheat', 'air', 'leak', 'meter', 'job', 'burst', 'wellOpen'].includes(k.type));
     if (tasks.length) {
       const yy = by - 30 + Math.sin(anim * 5) * 3;
       circle(bx, yy, 11, '#f0a020');
@@ -245,6 +245,12 @@ G.R = (() => {
     const cy = gy + 30;
     rect(x0 - 30, cy - 10, x1 - x0 + 50, 62, '#6b6a66');
     rect(x0 - 26, cy - 6, x1 - x0 + 42, 54, '#2f2c28');
+    // тепловые камеры перед домами: бетонный колодец вокруг ответвления на дом
+    D.HOUSES.forEach((hd, i) => {
+      const wx = D.wellX(i);
+      rect(wx - 30, gy + 16, 60, cy + 58 - gy - 16, '#7a756c');
+      rect(wx - 26, gy + 16, 52, cy + 54 - gy - 16, '#24211d');
+    });
     const H = s.heat, W = s.gvs;
     // магистраль теплосети от ТЭЦ — входит в ЦТП слева
     const nx = D.PLACES.ctp.x + 30, tRet = G.Sim.netReturn(s);
@@ -268,19 +274,32 @@ G.R = (() => {
         ctx.beginPath(); ctx.moveTo(x0 - 10, y); ctx.lineTo(x1, y); ctx.stroke();
         ctx.setLineDash([]);
       }
-      D.HOUSES.forEach((hd) => {
-        const bx = hd.x + 30 + k * 9;
-        ctx.strokeStyle = tempColor(t, D.PIPES[pipe].color); ctx.lineWidth = 5;
-        ctx.beginPath(); ctx.moveTo(bx, y); ctx.lineTo(bx, gy); ctx.stroke();
+      D.HOUSES.forEach((hd, i) => {
+        const bx = hd.x + 30 + k * 9, vy = gy + 24, wv = s.wells[i].v[k];
+        ctx.lineWidth = 5;
+        ctx.strokeStyle = tempColor(t, D.PIPES[pipe].color);
+        ctx.beginPath(); ctx.moveTo(bx, y); ctx.lineTo(bx, vy); ctx.stroke();
+        // задвижка в камере: закрыта — дальше к дому труба холодная
+        ctx.strokeStyle = wv.open ? tempColor(t, D.PIPES[pipe].color) : '#5c6f86';
+        ctx.beginPath(); ctx.moveTo(bx, vy); ctx.lineTo(bx, gy); ctx.stroke();
+        rect(bx - 4, vy - 3, 8, 6, wv.open ? '#1d2b1d' : '#e53935');
       });
       ctx.lineWidth = 6; ctx.strokeStyle = tempColor(t, D.PIPES[pipe].color);
       ctx.beginPath(); ctx.moveTo(x0 - 10 + k * 8 - 12, y); ctx.lineTo(x0 - 10 + k * 8 - 12, gy); ctx.stroke();
       tag(D.PIPES[pipe].name + ' ' + U.deg(t), x0 + 70, y, D.PIPES[pipe].color, '#fff', 10);
     });
+    // люки камер на тротуаре
+    D.HOUSES.forEach((hd, i) => {
+      const wx = D.wellX(i), w = s.wells[i];
+      ctx.beginPath(); ctx.ellipse(wx, gy + 8, 18, 5.5, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#3b3a37'; ctx.fill(); ctx.strokeStyle = '#1e1d1a'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(wx, gy + 8, 11, 3.2, 0, 0, Math.PI * 2); ctx.strokeStyle = '#55534d'; ctx.lineWidth = 1; ctx.stroke();
+      text('ТК-' + (i + 1), wx, gy - 4, 9, w.v.some((v) => !v.open) ? '#ff8a80' : '#dfe6ee', 'center', true);
+      addHit('well:' + i, wx - 28, gy - 14, 56, 44);
+    });
     if (s.ev.burst) {
-      const hd = D.HOUSES[s.ev.burst.house];
-      const bx = hd.x - 30;
-      const big = !s.ev.burst.isolated;
+      const bx = D.wellX(s.ev.burst.house) + 62;
+      const big = G.Sim.burstLeakK(s) > 0.5;
       for (let i = 0; i < (big ? 9 : 3); i++) {
         const k = ((anim * 0.6 + i / 9) % 1);
         circle(bx + Math.sin(anim * 2 + i) * 14, gy - k * (big ? 140 : 50), 10 + k * 26, 'rgba(240,244,248,' + (0.5 * (1 - k)) + ')');
@@ -758,6 +777,96 @@ G.R = (() => {
     ctx.restore();
   }
 
+  // ================= ТЕПЛОВАЯ КАМЕРА =================
+  const WL = { x: [330, 450, 570, 690], top: [134, 172, 210, 248], main: [374, 402, 430, 458], vy: 304, floor: 498, hatch: 170, ceil: 76 };
+  function wellValve(x, y, v, k) {
+    rect(x - 17, y - 24, 34, 6, '#474c55'); rect(x - 17, y + 18, 34, 6, '#474c55');
+    rr(x - 13, y - 18, 26, 36, 5); ctx.fillStyle = '#4a4038'; ctx.fill();
+    for (let j = 0; j < 4; j++) circle(x - 9 + (U.hash(k, j) * 18), y - 12 + U.hash(j, k, 3) * 24, 2.5, 'rgba(150,80,30,.55)');
+    rect(x - 32, y - 6, 19, 12, '#4a5059');
+    // шпиндель влево: у открытой выдвинут
+    const sx = x - 32 - (v.open ? 26 : 12);
+    ctx.strokeStyle = '#b8bec6'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(x - 32, y); ctx.lineTo(sx, y); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(sx, y, 5, 19, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = v.broken ? '#666' : '#c0392b'; ctx.lineWidth = 4; ctx.stroke();
+    tag(D.PIPES[k + 1].name + (v.open ? ' откр.' : ' закр.'), x, y + 42, v.open ? '#2e7d32' : '#b3261e', '#fff', 12);
+    if (v.stuck || v.broken) { circle(x + 20, y - 30, 9, '#f0a020'); text('!', x + 20, y - 29, 13, '#1a1205', 'center', true, false); }
+    addHit('wv:' + k, x - 70, y - 54, 100, 112);
+  }
+  function drawWell(s, P) {
+    boxView();
+    const i = s.well, w = s.wells[i], hd = D.HOUSES[i], B = s.ev.burst;
+    const leak = B && B.house === i ? G.Sim.burstLeakK(s) : 0;
+    const L = daylight(s.t);
+    rect(0, 0, LW, LH, '#24221f');
+    ctx.save(); ctx.translate(tx, ty);
+    // стены из бетонных блоков
+    rect(-400, -200, 1800, 900, '#4a4741');
+    ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 2;
+    for (let y = WL.ceil; y < WL.floor; y += 58) {
+      ctx.beginPath(); ctx.moveTo(-400, y); ctx.lineTo(1400, y); ctx.stroke();
+      for (let x = -400 + (y % 116 ? 60 : 0); x < 1400; x += 120) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 58); ctx.stroke(); }
+    }
+    for (let k = 0; k < 30; k++) circle(U.hash(k, i, 5) * 960, 40 + U.hash(k, 6) * 440, 6 + U.hash(k, 7) * 22, 'rgba(0,0,0,.09)');
+    // перекрытие и горловина люка — сверху свет с улицы
+    rect(-400, -200, 1800, WL.ceil + 200, '#38352f');
+    rect(WL.hatch - 38, -200, 76, WL.ceil + 200, skyGrad(-200, WL.ceil, L, s));
+    const g = ctx.createRadialGradient(WL.hatch, WL.ceil, 10, WL.hatch + 60, 300, 460);
+    g.addColorStop(0, 'rgba(255,240,200,' + (0.12 + 0.25 * L) + ')'); g.addColorStop(1, 'rgba(255,240,200,0)');
+    ctx.fillStyle = g; ctx.fillRect(-400, 0, 1800, WL.floor);
+    // переносная лампа
+    rect(759, WL.ceil, 2, 22, '#222'); circle(760, WL.ceil + 28, 7, '#fff3c0');
+    const g2 = ctx.createRadialGradient(760, WL.ceil + 28, 4, 760, 220, 320);
+    g2.addColorStop(0, 'rgba(255,230,160,.25)'); g2.addColorStop(1, 'rgba(255,230,160,0)');
+    ctx.fillStyle = g2; ctx.fillRect(400, WL.ceil, 600, WL.floor - WL.ceil);
+    // скобы-ступени
+    for (let y = WL.ceil + 16; y < WL.floor - 10; y += 36) { rect(WL.hatch - 20, y, 40, 4, '#8a8f96'); rect(WL.hatch - 20, y - 8, 4, 12, '#6d7279'); rect(WL.hatch + 16, y - 8, 4, 12, '#6d7279'); }
+    rect(-400, WL.floor, 1800, 300, '#2f2c27');
+    const H = s.heat, W = s.gvs;
+    const tMain = [H.t1 - (1 - hd.dist) * 10, H.t2, W.t3, W.t4];
+    const qMain = [H.q, H.q, W.ps > 1 ? 0.6 + W.q * 0.4 : 0, W.q];
+    // магистраль квартала проходит насквозь
+    for (let k = 0; k < 4; k++) {
+      const y = WL.main[k], c = D.PIPES[k + 1].color;
+      pipeSeg(-400, y, 1400, y, c, tMain[k], 14);
+      flowMarks([[-400, y], [1400, y]], qMain[k], k % 2 ? -1 : 1);
+    }
+    text('← от ЦТП', 20, WL.main[0] - 22, 12, '#cfd8e3', 'left', true);
+    text('магистраль квартала →', 940, WL.main[0] - 22, 12, '#cfd8e3', 'right', true);
+    // ответвление на дом: подъём, задвижка, уход в стену к дому
+    for (let k = 0; k < 4; k++) {
+      const x = WL.x[k], y0 = WL.main[k], y1 = WL.top[k], c = D.PIPES[k + 1].color, v = w.v[k];
+      const tB = v.open ? tMain[k] : 20;
+      pipeSeg(x, y0, x, WL.vy, c, tMain[k], 12);
+      pipeSeg(x, WL.vy, x, y1, c, tB, 12);
+      pipeSeg(x, y1, 1400, y1, c, tB, 12);
+      circle(x, y0, 9, '#151a20');
+      tag(D.PIPES[k + 1].name, 900, y1, c, '#fff', 11);
+    }
+    text('к ' + hd.name.replace('Дом', 'дому') + ' →', 940, WL.top[0] - 22, 13, '#ffd36b', 'right', true);
+    for (let k = 0; k < 4; k++) wellValve(WL.x[k], WL.vy, w.v[k], k);
+    // вода на полу; при порыве на этом вводе — кипяток и пар
+    const lvl = leak ? 10 + leak * 26 : B && B.house === i ? 8 : 3;
+    ctx.fillStyle = leak ? 'rgba(150,170,190,.55)' : 'rgba(70,110,160,.45)';
+    ctx.fillRect(-400, WL.floor - lvl, 1800, lvl + 4);
+    if (leak) {
+      // кипяток бьёт из стены со стороны дома, камера в пару
+      ctx.strokeStyle = 'rgba(200,215,230,.75)'; ctx.lineWidth = 6 * leak; ctx.lineCap = 'round';
+      const jx = 960 + tx - 4;
+      ctx.beginPath(); ctx.moveTo(jx, WL.top[0] + 20); ctx.quadraticCurveTo(jx - 70, WL.top[0] + 20 + Math.sin(anim * 9) * 4, jx - 100, WL.floor - 6); ctx.stroke();
+      for (let k = 0; k < 12; k++) {
+        const kk = (anim * 0.45 + k / 12) % 1, x = 380 + U.hash(k, 3) * 580 + Math.sin(anim + k) * 20;
+        ctx.beginPath(); ctx.ellipse(x, WL.floor - 20 - kk * 420, 40 + kk * 70, 22 + kk * 30, 0, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(232,238,244,' + (0.22 * leak * (1 - kk)) + ')'; ctx.fill();
+      }
+    }
+    text('Тепловая камера ' + 'ТК-' + (i + 1) + ' · перед ' + hd.name.replace('Дом', 'домом'), 480, WL.ceil + 22, 15, '#ddd', 'center', true);
+    drawMan(WL.hatch + 70, WL.floor + 6, 1, 0, 2.1, 'work');
+    addHit('exit', WL.hatch - 50, -100, 100, 620);
+    ctx.restore();
+  }
+
   // ---------- кадр
   function frame(s, P, dt) {
     anim += dt;
@@ -770,6 +879,7 @@ G.R = (() => {
       case 'home': drawHome(s, P); break;
       case 'shop': drawShopIn(s, P); break;
       case 'house': drawBasement(s, P); break;
+      case 'well': drawWell(s, P); break;
       default: break;
     }
     const tg = G.Tut && G.Tut.worldTarget();

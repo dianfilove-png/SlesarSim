@@ -29,6 +29,9 @@ BOT = """
   s.houses.forEach(x => { x.air = 0; x.leak = 0; });
   s.tasks.forEach(k => { if (!k.done && !k.failed && (k.type === 'meter' || k.type === 'job')) k.doneFlag = true; });
   if (s.ev.burst && s.ev.burst.called === null) s.ev.burst.called = s.t;
+  if (s.ev.burst && !G.Sim.burstIsolated(s)) G.D.WELL_PIPES[s.ev.burst.pipe].forEach(k => { Object.assign(s.wells[s.ev.burst.house].v[k], { open: false, stuck: false }); });
+  if (!s.ev.burst) s.wells.forEach(w => w.v.forEach(v => { v.open = true; v.stuck = false; v.broken = false; }));
+  if (s.tasks.some(k => k.type === 'wellRev' && !k.done && !k.failed)) s.wells.forEach(w => { w.revAt = s.t; });
   const tins = s.houses.map(x => x.tin);
   if (U.mod(s.t) % 180 === 0) { if (Math.min(...tins) < 19.8 && H.corr < 12) H.corr += 1; else if (Math.max(...tins) > 24.5 && H.corr > -12) H.corr -= 1; }
   return Math.min(...tins);

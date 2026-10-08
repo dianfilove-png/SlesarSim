@@ -61,11 +61,12 @@ G.Main = (() => {
     if (!quiet) G.UI.hint(scene);
     if (scene === 'shop') G.UI.panelShop();
     if (scene === 'house') G.UI.panelBasement(s.house);
+    if (scene === 'well') G.UI.panelWell(s.well);
   }
   function exit() {
     const s = G.S;
     if (s.scene === 'street') return;
-    const pos = { shop: D.PLACES.shop.door, ctp: D.PLACES.ctp.door, home: D.HOUSES[0].x + 60, house: D.HOUSES[s.house].x + D.HOUSES[s.house].w / 2 };
+    const pos = { shop: D.PLACES.shop.door, ctp: D.PLACES.ctp.door, home: D.HOUSES[0].x + 60, house: D.HOUSES[s.house].x + D.HOUSES[s.house].w / 2, well: D.wellX(s.well) };
     s.px = pos[s.scene];
     advance(2);
     enter('street');
@@ -158,6 +159,7 @@ G.Main = (() => {
       if (kind === 'shop') goPlace('shop');
       else if (kind === 'ctp') goPlace('ctp');
       else if (kind === 'house') { const hd = D.HOUSES[n]; UI.closePanel(); goTo(hd.x + hd.w / 2, () => UI.panelHouse(n)); }
+      else if (kind === 'well') { UI.closePanel(); goTo(D.wellX(n), () => UI.panelHatch(n)); }
       else if (kind === 'ground') { UI.closePanel(); goTo(l.x + R.cam.street); }
       return;
     }
@@ -183,6 +185,7 @@ G.Main = (() => {
     }
     if (s.scene === 'shop') { if (kind === 'door') exit(); else UI.panelShop(); return; }
     if (s.scene === 'house') { if (kind === 'exit') exit(); else UI.panelBasement(s.house); }
+    if (s.scene === 'well') { if (kind === 'exit') exit(); else UI.panelWell(s.well); }
   }
 
   // ---------- цикл

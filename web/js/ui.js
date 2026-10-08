@@ -120,7 +120,7 @@ G.UI = (() => {
     const unread = s.msgs.filter((m) => !m.read).length;
     $('ph-badge').textContent = unread ? String(unread) : '';
     [...$('speed').children].forEach((b, i) => b.classList.toggle('on', i === s.speed));
-    const names = { street: 'Квартал', ctp: 'ЦТП-7', home: 'Дом №1, кв. 12 — моя квартира', shop: 'Магазин «Продукты · Хозтовары»', house: D.HOUSES[s.house].name + ' — подвал' };
+    const names = { street: 'Квартал', ctp: 'ЦТП-7', home: 'Дом №1, кв. 12 — моя квартира', shop: 'Магазин «Продукты · Хозтовары»', house: D.HOUSES[s.house].name + ' — подвал', well: 'Тепловая камера ТК-' + (s.well + 1) };
     $('loc').textContent = names[s.scene] + (isModal() && !G.busy ? ' · пауза' : '');
     actbar();
     const b = G.busy;
@@ -164,6 +164,9 @@ G.UI = (() => {
     } else if (s.scene === 'house') {
       add('Действия', () => panelBasement(s.house), true);
       add('На улицу', () => M.exit());
+    } else if (s.scene === 'well') {
+      add('Задвижки', () => panelWell(s.well), true);
+      add('Наверх', () => M.exit());
     }
   }
   // ---------- зоны ЦТП и список оборудования
@@ -629,7 +632,7 @@ G.UI = (() => {
     kv(b, 'Горячая вода', U.deg(hs.ttap) + 'C', hs.ttap < 50 ? 'bad' : hs.ttap < 58 ? 'warn' : 'ok');
     kv(b, 'Настроение жильцов', Math.round(hs.sat) + '%', hs.sat > 60 ? 'ok' : hs.sat > 35 ? 'warn' : 'bad');
     meter(b, hs.sat, hs.sat > 60 ? '#4caf50' : hs.sat > 35 ? '#f0b030' : '#e53935');
-    const tasks = s.tasks.filter((k) => !k.done && !k.failed && k.ref === i && ['heat', 'hot', 'overheat', 'air', 'leak', 'meter', 'job', 'burst'].includes(k.type));
+    const tasks = s.tasks.filter((k) => !k.done && !k.failed && k.ref === i && ['heat', 'hot', 'overheat', 'air', 'leak', 'meter', 'job', 'burst', 'wellOpen'].includes(k.type));
     if (tasks.length) { sect(b, 'Заявки по дому'); tasks.forEach((k) => taskCard(b, k)); }
   }
   function panelHouse(i) {
@@ -640,6 +643,9 @@ G.UI = (() => {
       if (s.ev.burst && s.ev.burst.house === i && s.ev.burst.called === null) btn(b, 'Вызвать аварийную бригаду на порыв!', () => A().callBrigade(), { cls: 'danger', sub: dur(5) });
       if (D.HOUSES[i].mine) btn(b, 'Подняться домой, кв. 12', () => G.Main.enter('home'), { cls: 'main' });
       btn(b, 'Спуститься в подвал (узел ввода)', () => { s.house = i; G.Main.enter('house'); }, { cls: D.HOUSES[i].mine ? '' : 'main' });
+      const bw = s.ev.burst && s.ev.burst.house === i && !G.Sim.burstIsolated(s);
+      btn(b, 'Тепловая камера ' + TK(i) + ' (люк перед домом)', () => { closePanel(); G.Main.goTo(D.wellX(i), () => panelHatch(i)); },
+        { cls: bw || G.Ev.openTask('wellOpen', i) ? 'danger' : '', sub: bw ? 'Перекрыть ввод — порыв!' : 'Задвижки на ответвлении к дому' });
       btn(b, 'Поговорить с жильцами у подъезда', () => A().talk(i), { sub: dur(10) });
       s.tasks.filter((k) => k.type === 'job' && k.ref === i && !k.done && !k.failed).forEach((k) => btn(b, 'Шабашка: кв. ' + k.apt + ' — ' + k.job, () => A().job(k.id), { sub: U.money(k.money) + ' · ' + dur(k.min) }));
     }, true);
@@ -656,6 +662,66 @@ G.UI = (() => {
       s.tasks.filter((k) => k.type === 'job' && k.ref === i && !k.done && !k.failed).forEach((k) => btn(b, 'Шабашка: кв. ' + k.apt + ' — ' + k.job, () => A().job(k.id), { sub: U.money(k.money) + ' · ' + dur(k.min) }));
       if (s.ev.burst && s.ev.burst.house === i && s.ev.burst.called === null) btn(b, 'Вызвать аварийную бригаду на порыв!', () => A().callBrigade(), { cls: 'danger' });
       btn(b, 'Выйти на улицу', () => G.Main.exit(), { cls: 'ghost' });
+    }, true);
+  }
+
+  // ================= тепловые камеры
+  const TK = (i) => 'ТК-' + (i + 1);
+  const wellState = (v) => (v.broken ? 'сорван шпиндель' : (v.open ? 'открыта' : 'ЗАКРЫТА') + (v.stuck ? ' · закисла' : ''));
+  const wellCls = (v) => (v.broken || v.stuck ? 'bad' : v.open ? 'ok' : 'warn');
+  function wellInfo(b, i) {
+    const s = G.S, w = s.wells[i], B = s.ev.burst;
+    w.v.forEach((v, k) => kv(b, D.PIPES[k + 1].full.replace(' — ', ' (') + ')', wellState(v), wellCls(v)));
+    if (B && B.house === i) {
+      const iso = G.Sim.burstIsolated(s);
+      kv(b, B.pipe === 'heat' ? 'Порыв теплотрассы' : 'Порыв ГВС', iso ? 'отсечён' : 'ХЛЕЩЕТ — закрыть ' + (B.pipe === 'heat' ? 'Т1 и Т2' : 'Т3 и Т4'), iso ? 'ok' : 'bad');
+    }
+    if (w.fixAt !== null) kv(b, 'Подрядчики', 'заменят задвижку ' + U.dateStr(w.fixAt) + ', ' + U.clock(w.fixAt), 'warn');
+    kv(b, 'Ревизия', w.revAt >= 0 ? U.dateStr(w.revAt) : 'не проводилась', w.revAt >= 0 ? 'ok' : 'warn');
+  }
+  // у люка на улице
+  function panelHatch(i) {
+    const s = G.S, B = s.ev.burst;
+    panel('Тепловая камера ' + TK(i), (b) => {
+      para(b, 'Колодец на тротуаре перед ' + D.HOUSES[i].name.replace('Дом', 'домом') + ': от магистрали квартала тут отходит ответвление на дом — четыре задвижки, Т1–Т4. Если порыв на вводе или в доме — перекрыть здесь, и вода не уходит, а остальные дома живут.', true);
+      wellInfo(b, i);
+      sect(b, 'Действия');
+      const hot = B && B.house === i && !G.Sim.burstIsolated(s);
+      btn(b, 'Открыть люк и спуститься', () => A().wellDown(i), { cls: hot ? 'danger' : 'main', sub: dur(4) + (hot ? ' · внизу пар и кипяток — можно ошпариться!' : ' · крюком поддеть крышку') });
+      if (B && B.house === i && B.called === null) btn(b, 'Вызвать аварийную бригаду на порыв!', () => A().callBrigade(), { cls: 'danger', sub: dur(5) });
+      btn(b, 'Отойти', () => closePanel(), { cls: 'ghost' });
+    }, true);
+  }
+  // внизу, в камере
+  function panelWell(i) {
+    const s = G.S;
+    panel(() => 'Камера ' + TK(i) + ' — задвижки', (b) => {
+      const w = s.wells[i], B = s.ev.burst;
+      para(b, 'Ответвление на ' + D.HOUSES[i].name.replace('Дом', 'дом') + '. Т1/Т2 закрыть — дом без отопления, Т3/Т4 — без горячей воды. Задвижки годами не трогали — могут закиснуть.', true);
+      if (B && B.house === i) {
+        const iso = G.Sim.burstIsolated(s);
+        kv(b, B.pipe === 'heat' ? 'Порыв теплотрассы' : 'Порыв ГВС', iso ? 'отсечён' : 'ХЛЕЩЕТ — закрыть ' + (B.pipe === 'heat' ? 'Т1 и Т2' : 'Т3 и Т4'), iso ? 'ok' : 'bad');
+      }
+      const need = B && B.house === i ? D.WELL_PIPES[B.pipe] : [];
+      const task = G.Ev.openTask('wellOpen', i);
+      w.v.forEach((v, k) => {
+        sect(b, D.PIPES[k + 1].full + ': ' + wellState(v));
+        if (v.broken) { para(b, 'Шпиндель сорван. Заменят подрядчики' + (w.fixAt !== null ? ' — ' + U.dateStr(w.fixAt) + ', ' + U.clock(w.fixAt) : '') + '.', true); return; }
+        if (v.stuck) {
+          btn(b, 'WD-40 и расходить штурвал', () => A().wellUnstick(i, k, 'wd'), { cls: inv('wd40') ? 'main' : 'warn', sub: 'WD-40 (есть ' + inv('wd40') + ') · ' + dur(15) + ' · шанс высокий' });
+          btn(b, 'Газовым ключом с трубой', () => A().wellUnstick(i, k, 'force'), { cls: 'danger', sub: dur(10) + ' · можно сорвать шпиндель!' });
+          return;
+        }
+        const urgent = (v.open && need.includes(k) && !G.Sim.burstIsolated(s)) || (!v.open && task && D.WELL_PIPES[task.circ].includes(k) && !need.length);
+        btn(b, v.open ? 'Закрыть ' + D.PIPES[k + 1].name : 'Открыть ' + D.PIPES[k + 1].name, () => A().wellToggle(i, k),
+          { cls: urgent ? 'main' : '', sub: dur(6) + (v.open ? ' · дом останется без ' + (k < 2 ? 'отопления' : 'горячей воды') : '') });
+      });
+      sect(b, 'Обслуживание');
+      const rv = w.v.some((v) => !v.open);
+      const rt = G.Ev.openTask('wellRev');
+      btn(b, 'Ревизия: расходить все задвижки', () => A().wellRevise(i), { cls: rv ? 'warn' : rt && !(w.revAt > rt.from) ? 'main' : '',
+        sub: rv ? 'Сначала открыть все задвижки' : 'Закрыть-открыть каждую, смазать шпиндель · ' + dur(25) });
+      btn(b, 'Подняться наверх', () => G.Main.exit(), { cls: 'ghost' });
     }, true);
   }
 
@@ -821,6 +887,7 @@ G.UI = (() => {
       '<p><b>Пуск отопления</b> (если стоит): закрыть «Дренаж отопл.» → открыть задвижки Зд1–Зд4 → открыть подпитку и ждать ~4 бар (время должно идти, ×5 ускорит) → закрыть подпитку → запустить Н1 или Н2. В шкафу управления есть чек-лист: что мешает — красным.</p>' +
       '<p><b>Насосы</b> работают парами: рабочий и резервный. Смазывай подшипники, меняй уплотнения, следи за шумом. При ремонте по техкарте сначала обесточь — иначе удар током.</p>' +
       '<p><b>Квартал.</b> Над домами — температура в квартирах и горячей воды. Если холодно — жильцы звонят. Регулятор в шкафу управления позволяет поднять или опустить график.</p>' +
+      '<p><b>Тепловые камеры.</b> Перед каждым домом на тротуаре — люк ТК: внизу ответвление теплотрассы на дом и 4 задвижки. При порыве у дома вызови аварийку и сам спустись перекрыть ввод (Т1+Т2 — отопление, Т3+Т4 — горячая вода): вода перестанет уходить, бригада быстрее управится. После ремонта задвижки надо открыть. Летом — ревизия камер, чтобы задвижки не закисли.</p>' +
       '<p><b>Жизнь.</b> Ешь, спи, отдыхай. Зарплата 5-го и 20-го. Запчасти бесплатно со склада (через телефон, к утру) или сразу в магазине за свои. Шабашки у жильцов — подработка.</p>' +
       '<p><b>Лето</b> (после 15 мая): ремонтная кампания по плану начальника — опрессовка отопления, ревизия насосов, грязевик. В июне теплосеть отключает горячую воду на 10 дней. Можно взять отпуск (Телефон → Я). 1 сентября — комиссия по готовности, 1 октября — пуск отопления.</p>' +
       '<p><b>Цель</b> — продержаться до конца отопительного сезона 15 мая и не лишиться доверия начальства. Время: кнопки ❚❚ / ×1 / ×5 / ×20.</p>' +
@@ -850,11 +917,12 @@ G.UI = (() => {
   }
 
   const HINTS = {
-    street: 'Это твой квартал. Тапни по зданию — пойдёшь туда. Над домами: температура в квартирах и горячей воды. Свайп — прокрутка. Под землёй видно 4 трубы.',
+    street: 'Это твой квартал. Тапни по зданию — пойдёшь туда. Над домами: температура в квартирах и горячей воды. Свайп — прокрутка. Под землёй видно 4 трубы, перед каждым домом — люк тепловой камеры (ТК).',
     ctp: 'Твой ЦТП. Тапай по насосам, задвижкам, манометрам. Красная — Т1, синяя — Т2 (отопление), оранжевая — Т3, фиолетовая — Т4 (ГВС). «Шкаф» — чек-лист пуска. Свайп двигает помещение.',
     home: 'Квартира. Кровать — сон, кухня — еда, телевизор — настроение. Батарея греется от твоего же ЦТП.',
     shop: 'Магазин: еда, запчасти, инструмент. Запчасти бесплатно — через склад в телефоне, но привезут только к утру.',
     house: 'Подвал дома: узел ввода. Здесь спускают воздух, ставят хомуты, снимают показания.',
+    well: 'Тепловая камера под люком. Магистраль идёт насквозь, ответвление на дом — через 4 задвижки. Тапни по задвижке или «Задвижки». Наверх — по скобам.',
   };
   function hint(scene) {
     const s = G.S;
@@ -875,5 +943,5 @@ G.UI = (() => {
 
   return Object.assign(api, { init, hud, tick, toast, onMessage, say, flash, ring, panel, reopen, closePanel, hidePanelForBusy, isModal,
     panelOpen, overlayOpen, closeOverlay, panelPump, panelValve, panelHX, panelNet, panelHvs, panelEquip, openObj, checklist, pressReport, panelFilter, panelDrain, panelFeed, panelGauge, panelCabinet,
-    panelDesk, panelBox, panelHome, panelHouse, panelBasement, panelShop, phone, obhodReport, menu, help, intro, victory, gameOver, hint });
+    panelDesk, panelBox, panelHome, panelHouse, panelBasement, panelHatch, panelWell, panelShop, phone, obhodReport, menu, help, intro, victory, gameOver, hint });
 })();

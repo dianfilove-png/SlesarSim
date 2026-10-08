@@ -53,6 +53,9 @@ G.D = (() => {
     ctp: { x: 640, w: 230, door: 755, name: 'ЦТП-7' },
   };
   const STREET_W = 2480;
+  // тепловая камера (колодец) перед домом: люк на тротуаре над ответвлением теплотрассы на дом
+  const wellX = (i) => HOUSES[i].x + 44;
+  const WELL_PIPES = { heat: [0, 1], gvs: [2, 3] }; // индексы задвижек камеры (Т1–Т4) для порыва отопления / ГВС
 
   const RANKS = [
     { r: 3, xp: 0, salary: 42000, speed: 1.0 },
@@ -151,5 +154,5 @@ G.D = (() => {
   const NAMES = ['Зинаида Петровна', 'Валентина Ивановна', 'Сергей из 45-й', 'Тамара Николаевна', 'Олег Палыч',
     'Людмила Сергеевна', 'Виктор Степанович', 'Ирина (кв. 7)', 'Баба Нюра', 'Аркадий Борисович', 'Марина с третьего'];
 
-  return { ITEMS, SHOP_ORDER, SKLAD_LIMIT, HOUSES, PLACES, STREET_W, RANKS, PIPES, PROCS, DECOYS, JOBS, NAMES };
+  return { ITEMS, SHOP_ORDER, SKLAD_LIMIT, HOUSES, PLACES, STREET_W, wellX, WELL_PIPES, RANKS, PIPES, PROCS, DECOYS, JOBS, NAMES };
 })();

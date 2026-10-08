@@ -4,6 +4,25 @@
 G.St = (() => {
   const KEY = 'slesarsim_save_v1';
 
+  // тепловая камера: 4 задвижки на ответвлении к дому (Т1–Т4), годами не тронутые — могут закиснуть
+  function newWell() {
+    return { revAt: -1, fixAt: null, v: [0, 1, 2, 3].map(() => ({ open: true, stuck: false, broken: false, lastOp: -Math.round(120 + Math.random() * 300) * 1440 })) };
+  }
+  // старые сохранения: до камер дом отсекала аварийка флагом cutoff
+  function migrate(S) {
+    if (!S.wells) {
+      S.wells = G.D.HOUSES.map(() => newWell());
+      const B = S.ev && S.ev.burst;
+      if (B) {
+        B.pipe = B.pipe || 'heat';
+        if (B.isolated) { B.arrived = true; G.D.WELL_PIPES.heat.forEach((k) => { S.wells[B.house].v[k].open = false; }); }
+      }
+    }
+    if (S.well === undefined) S.well = 0;
+    S.houses.forEach((h) => { delete h.cutoff; });
+    return S;
+  }
+
   function newGame() {
     const D = G.D;
     const S = {
@@ -12,6 +31,7 @@ G.St = (() => {
       speed: 1,
       scene: 'home',
       house: 1,
+      well: 0,
       px: 1070,
       wx: { dev: 0, snap: null, snow: false },
       tout: 8, tnet: 75,
@@ -41,7 +61,8 @@ G.St = (() => {
         { id: 'Зд8', pipe: 4, outer: false, cond: 85, gland: 0, packing: 3, flange: 0 },
       ],
       houses: D.HOUSES.map((h) => ({ id: h.id, tin: 21 + Math.random(), ttap: 58, sat: 62 + Math.random() * 10,
-        air: 0, leak: 0, cutoff: false, last: {} })),
+        air: 0, leak: 0, last: {} })),
+      wells: D.HOUSES.map(() => newWell()),
       flood: 0,
       tasks: [],
       msgs: [],
@@ -68,7 +89,7 @@ G.St = (() => {
       if (!raw) return null;
       const S = JSON.parse(raw);
       if (!S || S.v !== 1) return null;
-      return S;
+      return migrate(S);
     } catch (e) { return null; }
   }
   function hasSave() { try { return !!localStorage.getItem(KEY); } catch (e) { return false; } }
