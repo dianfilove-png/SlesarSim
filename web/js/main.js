@@ -166,13 +166,8 @@ G.Main = (() => {
     }
     if (s.scene === 'ctp') {
       P.ctpTo = U.clamp(l.x + R.cam.ctp, 60, R.CT.W - 80);
-      const map = {
-        door: () => exit(), valve: () => UI.panelValve(n), pump: () => UI.panelPump(n), hx: () => UI.panelHX(a), filter: () => UI.panelFilter(),
-        drain: () => UI.panelDrain(a), feed: () => UI.panelFeed(), gauge: () => UI.panelGauge(n), cabinet: () => UI.panelCabinet(),
-        desk: () => UI.panelDesk(), box: () => UI.panelBox(), net: () => UI.panelNet(), hvs: () => UI.panelHvs(),
-      };
-      if (map[kind]) {
-        map[kind]();
+      if (kind === 'door') exit();
+      else if (UI.ctpPanel(id)) {
         // объект оказался под панелью — сдвигаем камеру, чтобы его было видно слева
         const pw = UI.panelOpen() ? document.getElementById('panel').offsetWidth : 0;
         if (pw && cx > window.innerWidth - pw - 30) R.focusCtp(l.x + R.cam.ctp, 0.22);
@@ -228,7 +223,8 @@ G.Main = (() => {
       for (let i = 0; i < k && !G.S.over; i++) stepOnce();
       if (!rate) acc = 0;
     }
-    if (started && G.S) R.frame(G.S, P, dt);
+    // под непрозрачным оверлеем (меню, итоги, «Как играть») канвас не виден — не рисуем его зря
+    if (started && G.S && !G.UI.overlayOpen()) R.frame(G.S, P, dt);
     G.UI.tick(dt);
   }
 

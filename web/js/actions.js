@@ -38,6 +38,25 @@ G.Act = (() => {
     for (const [id, n] of list) if (!has(id, n)) r.push(D.ITEMS[id].name + (n > 1 ? ' ×' + n : '') + ' (есть ' + inv(id) + ')');
     return r;
   }
+  // что мешает начать ремонт — одна таблица и для самого действия, и для подсказки на кнопке в панели (ключи — как в D.PROCS)
+  const pumpOff = (p) => (p.on ? ['остановить насос'] : []);
+  const REQ = {
+    bearings: (i) => pumpOff(G.S.pumps[i]).concat(needItems([['bearing', 2], ['grease', 1]])),
+    seal: (i) => pumpOff(G.S.pumps[i]).concat(needItems([['seal', 1]])),
+    repack: (i) => dryReasons(D.PIPES[G.S.valves[i].pipe].circ).concat(needItems([['packing', 1]])),
+    regasket: (i) => isoReasons(G.S.valves[i]).concat(needItems([['gasket', 2]])),
+    replace: (i) => isoReasons(G.S.valves[i]).concat(needItems([['valve', 1], ['gasket', 2]])),
+    filter: () => dryReasons('heat').concat(needItems([['gasket', 1]])),
+    flush: (c) => dryReasons(c).concat(needItems([['reagent', 1]])),
+    press: () => pressReasons(),
+  };
+  const why = (key, a) => REQ[key](a);
+  // можно начинать? иначе тост «Сначала: …»
+  function ready(key, a) {
+    const r = why(key, a);
+    if (r.length) toast('Сначала: ' + r.join('; '), 'bad');
+    return !r.length;
+  }
 
   // ---------- задвижки
   function valveToggle(i) {
@@ -59,23 +78,30 @@ G.Act = (() => {
       toast(v.id + (v.open ? ' открыта' : ' закрыта'));
     });
   }
-  function valveUnstick(i, method) {
-    const s = G.S, v = s.valves[i];
+  // закисшая задвижка (на ЦТП или в камере): WD-40 или газовым ключом. o.name — имя в тостах, o.wdLabel/o.wdOk — тексты WD-40,
+  // o.broke() — последствия срыва шпинделя
+  function unstick(v, method, o) {
+    const s = G.S;
     if (method === 'wd') {
       if (!has('wd40')) return toast('Нет WD-40', 'bad');
       take('wd40');
-      busy('Брызгаю WD-40 и расхаживаю штурвал', 15, { work: 0.08 }, () => {
-        if (Math.random() < 0.7 + Ev.rankIdx() * 0.05) { v.stuck = false; v.lastOp = s.t; toast('Пошла родимая! ' + v.id + ' снова крутится.', 'good'); Ev.xp(5); }
+      busy(o.wdLabel, 15, { work: 0.08 }, () => {
+        if (Math.random() < 0.7 + Ev.rankIdx() * 0.05) { v.stuck = false; v.lastOp = s.t; toast(o.wdOk, 'good'); Ev.xp(5); }
         else toast('Не идёт. Дай смазке впитаться и попробуй ещё.', 'bad');
       });
     } else {
       busy('Тяну штурвал газовым ключом с трубой', 10, { work: 0.2 }, () => {
         const r = Math.random();
-        if (r < 0.5) { v.stuck = false; v.lastOp = s.t; toast('Сорвал с места! ' + v.id + ' крутится.', 'good'); }
-        else if (r < 0.66) { v.broken = true; v.cond = 3; toast('Хрясь! Сорвал шпиндель ' + v.id + '. Теперь только замена.', 'bad'); Ev.mood(-6); }
+        if (r < 0.5) { v.stuck = false; v.lastOp = s.t; toast('Сорвал с места! ' + o.name + ' крутится.', 'good'); }
+        else if (r < 0.66) { v.broken = true; Ev.mood(-6); o.broke(); }
         else toast('Не поддаётся…', 'bad');
       });
     }
+  }
+  function valveUnstick(i, method) {
+    const v = G.S.valves[i];
+    unstick(v, method, { name: v.id, wdLabel: 'Брызгаю WD-40 и расхаживаю штурвал', wdOk: 'Пошла родимая! ' + v.id + ' снова крутится.',
+      broke: () => { v.cond = 3; toast('Хрясь! Сорвал шпиндель ' + v.id + '. Теперь только замена.', 'bad'); } });
   }
   function valveTighten(i) {
     const v = G.S.valves[i];
@@ -88,9 +114,8 @@ G.Act = (() => {
     });
   }
   function valveRepack(i) {
-    const s = G.S, v = s.valves[i], c = D.PIPES[v.pipe].circ;
-    const r = dryReasons(c).concat(needItems([['packing', 1]]));
-    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
+    const s = G.S, v = s.valves[i];
+    if (!ready('repack', i)) return;
     G.MG.proc('repack', (q) => {
       take('packing');
       v.packing = 3; v.gland = q < 60 && Math.random() < 0.5 ? 1 : 0;
@@ -102,8 +127,7 @@ G.Act = (() => {
   }
   function valveReplace(i) {
     const s = G.S, v = s.valves[i];
-    const r = isoReasons(v).concat(needItems([['valve', 1], ['gasket', 2]]));
-    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
+    if (!ready('replace', i)) return;
     G.MG.bolts({ title: 'Замена задвижки ' + v.id, swap: 'Снимаю старую задвижку, ставлю новую на свежие прокладки…', swapMin: 20, rust: 0.5 - v.cond / 250 }, (q) => {
       take('valve'); take('gasket', 2);
       Object.assign(v, { cond: 100, gland: 0, packing: 3, stuck: false, broken: false, open: false, replacedAt: s.t, lastOp: s.t,
@@ -117,8 +141,7 @@ G.Act = (() => {
   }
   function valveRegasket(i) {
     const s = G.S, v = s.valves[i];
-    const r = isoReasons(v).concat(needItems([['gasket', 2]]));
-    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
+    if (!ready('regasket', i)) return;
     G.MG.bolts({ title: 'Замена прокладок ' + v.id, swap: 'Выбиваю старые прокладки, ставлю новые…', swapMin: 10, rust: 0.4 - v.cond / 300 }, (q) => {
       take('gasket', 2);
       v.flange = Math.random() < (100 - q) / 100 * 0.8 ? 1 : 0;
@@ -156,8 +179,7 @@ G.Act = (() => {
   }
   function pumpBearings(i) {
     const s = G.S, p = s.pumps[i];
-    const r = (p.on ? ['остановить насос'] : []).concat(needItems([['bearing', 2], ['grease', 1]]));
-    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
+    if (!ready('bearings', i)) return;
     G.MG.proc('bearings', (q) => {
       take('bearing', 2); take('grease');
       p.bear = Math.round((100 - q) * 0.12); p.broken = false; p.lube = 100; p.serviced = s.t;
@@ -165,12 +187,11 @@ G.Act = (() => {
       Ev.xp(35); Ev.mood(5);
       toast('Подшипники насоса ' + p.id + ' заменены. Можно запускать.', 'good');
       after();
-    }, { pump: p });
+    });
   }
   function pumpSeal(i) {
     const s = G.S, p = s.pumps[i];
-    const r = (p.on ? ['остановить насос'] : []).concat(needItems([['seal', 1]]));
-    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
+    if (!ready('seal', i)) return;
     G.MG.proc('seal', (q) => {
       take('seal');
       p.seal = Math.round((100 - q) * 0.1); p.serviced = s.t;
@@ -178,7 +199,7 @@ G.Act = (() => {
       Ev.xp(30); Ev.mood(4);
       toast('Торцевое уплотнение ' + p.id + ' заменено. Сухо!', 'good');
       after();
-    }, { pump: p });
+    });
   }
 
   // ---------- контуры
@@ -201,8 +222,7 @@ G.Act = (() => {
   function gvsSet(d) { const W = G.S.gvs; W.set = U.clamp(W.set + d, 55, 72); G.UI.reopen(); }
   function cleanFilter() {
     const s = G.S;
-    const r = dryReasons('heat').concat(needItems([['gasket', 1]]));
-    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
+    if (!ready('filter')) return;
     G.MG.proc('filter', (q) => {
       take('gasket');
       s.heat.clog = Math.round((100 - q) * 0.1); s.heat.cleanedAt = s.t;
@@ -214,8 +234,7 @@ G.Act = (() => {
   }
   function flush(c) {
     const s = G.S;
-    const r = dryReasons(c).concat(needItems([['reagent', 1]]));
-    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
+    if (!ready('flush', c)) return;
     G.MG.proc('flush', (q) => {
       take('reagent');
       s[c].foul = Math.max(0, s[c].foul - 85 * q / 100); s[c].flushedAt = s.t;
@@ -248,8 +267,7 @@ G.Act = (() => {
     return r;
   }
   function pressTest() {
-    const r = pressReasons();
-    if (r.length) return toast('Сначала: ' + r.join('; '), 'bad');
+    if (!ready('press')) return;
     G.MG.proc('press', () => {
       const s = G.S, defects = [];
       s.valves.forEach((v) => {
@@ -261,7 +279,7 @@ G.Act = (() => {
       s.pumps.forEach((p) => { if (p.circ === 'heat' && p.seal >= 60) { p.seal = Math.max(p.seal, 76); defects.push('потекло уплотнение насоса ' + p.id); } });
       s.houses.forEach((h, i) => { if (h.leak) defects.push('течь стояка в подвале ' + D.HOUSES[i].name.replace('Дом', 'дома')); });
       const drop = 0.04 + defects.length * 0.18 + Math.random() * 0.04;
-      const ok = !defects.length, first = !((s.heat.pressOkAt || -1) > (s.flags.summerFrom || 0));
+      const ok = !defects.length, first = !Ev.pressSigned(s);
       if (ok) {
         s.heat.pressOkAt = s.t;
         if (first) {
@@ -274,15 +292,18 @@ G.Act = (() => {
       G.UI.pressReport(ok, drop, defects);
     });
   }
+  // отпуск дают с 1 июня по 15 августа, отпускные — 45% оклада
+  const vacationSeason = (d) => d.m === 5 || d.m === 6 || (d.m === 7 && d.d <= 15);
+  const vacationPay = () => Math.round(D.RANKS[Ev.rankIdx()].salary * 0.45);
   function vacation() {
     const s = G.S, d = U.date(s.t), P = s.p;
-    if (!(d.m === 5 || d.m === 6 || (d.m === 7 && d.d <= 15))) return toast('Отпуск дают летом: с 1 июня по 15 августа', 'bad');
+    if (!vacationSeason(d)) return toast('Отпуск дают летом: с 1 июня по 15 августа', 'bad');
     if (P.vacYear === d.y) return toast('В этом году отпуск уже был', 'bad');
     if (P.trust < 40) return toast('Петрович: «Какой отпуск? Сначала порядок наведи!»', 'bad');
     if (s.ev.burst) return toast('Какой отпуск — порыв у ' + D.HOUSES[s.ev.burst.house].name.replace('Дом', 'дома') + '!', 'bad');
-    const pay = Math.round(D.RANKS[Ev.rankIdx()].salary * 0.45);
+    const pay = vacationPay();
     P.vacYear = d.y;
-    P.money += pay; s.stats.earned += pay;
+    Ev.earn(pay);
     Ev.skipTime(14 * 1440);
     P.energy = 100; P.hunger = 80; P.health = Math.min(100, P.health + 25);
     Ev.mood(40);
@@ -385,9 +406,7 @@ G.Act = (() => {
     busy('Читаю справочник по теплотехнике', 60, { work: 0.03 }, () => { P.readToday = (P.readToday || 0) + 1; Ev.xp(14); Ev.mood(-2); toast('+14 опыта', 'good'); });
   }
   function fishing() {
-    const d = U.date(G.S.t);
     if (U.isWorkday(G.S.t)) return toast('Рыбалка — только в выходные', 'bad');
-    if (d.m >= 11 || d.m <= 1) { /* зимняя рыбалка тоже норм */ }
     busy('На «Ниве» на рыбалку', 300, { work: 0.02 }, () => { Ev.mood(30); G.S.p.hunger -= 10; toast('Поймал трёх окуней. Душа отдохнула!', 'good'); });
   }
 
@@ -435,7 +454,7 @@ G.Act = (() => {
   }
 
   // ---------- тепловые камеры перед домами
-  const TK = (i) => 'ТК-' + (i + 1);
+  const TK = D.TK;
   const WPIPE = ['Т1', 'Т2', 'Т3', 'Т4'];
   // шанс закиснуть: задвижки в камерах годами не трогают
   const wellStickP = (v) => 0.04 + U.clamp((G.S.t - v.lastOp) / 1440 - 30, 0, 300) / 1000;
@@ -490,27 +509,14 @@ G.Act = (() => {
     });
   }
   function wellUnstick(i, k, method) {
-    const s = G.S, w = s.wells[i], v = w.v[k];
-    if (method === 'wd') {
-      if (!has('wd40')) return toast('Нет WD-40', 'bad');
-      take('wd40');
-      busy('Брызгаю WD-40 на шпиндель и расхаживаю штурвал', 15, { work: 0.08 }, () => {
-        if (Math.random() < 0.7 + Ev.rankIdx() * 0.05) { v.stuck = false; v.lastOp = s.t; toast('Пошла! ' + WPIPE[k] + ' в ' + TK(i) + ' крутится.', 'good'); Ev.xp(5); }
-        else toast('Не идёт. Дай смазке впитаться и попробуй ещё.', 'bad');
-      });
-    } else {
-      busy('Тяну штурвал газовым ключом с трубой', 10, { work: 0.2 }, () => {
-        const r = Math.random();
-        if (r < 0.5) { v.stuck = false; v.lastOp = s.t; toast('Сорвал с места! ' + WPIPE[k] + ' крутится.', 'good'); }
-        else if (r < 0.66) {
-          v.broken = true; v.stuck = false;
-          if (w.fixAt === null) w.fixAt = U.nextAt(s.t + 12 * 60, 14 * 60);
-          Ev.mood(-6);
-          toast('Хрясь! Сорвал шпиндель ' + WPIPE[k] + '.', 'bad');
-          Ev.msg(Ev.BOSS, 'Сорвал шпиндель в ' + TK(i) + '? Вызову подрядчиков, заменят ' + U.dateStr(w.fixAt) + ' к ' + U.clock(w.fixAt) + '.');
-        } else toast('Не поддаётся…', 'bad');
-      });
-    }
+    const s = G.S, w = s.wells[i], v = w.v[k], n = WPIPE[k];
+    unstick(v, method, { name: n, wdLabel: 'Брызгаю WD-40 на шпиндель и расхаживаю штурвал', wdOk: 'Пошла! ' + n + ' в ' + TK(i) + ' крутится.',
+      broke: () => {
+        v.stuck = false;
+        if (w.fixAt === null) w.fixAt = U.nextAt(s.t + 12 * 60, 14 * 60);
+        toast('Хрясь! Сорвал шпиндель ' + n + '.', 'bad');
+        Ev.msg(Ev.BOSS, 'Сорвал шпиндель в ' + TK(i) + '? Вызову подрядчиков, заменят ' + U.dateStr(w.fixAt) + ' к ' + U.clock(w.fixAt) + '.');
+      } });
   }
   // ревизия: закрыть и открыть каждую задвижку, чтобы не закисали
   function wellRevise(i) {
@@ -526,7 +532,7 @@ G.Act = (() => {
         v.lastOp = s.t;
       });
       if (!bad.length) {
-        if (w.revAt <= (s.flags.summerFrom || 0)) Ev.xp(8);
+        if (!Ev.sinceSummer(s, w.revAt)) Ev.xp(8);
         w.revAt = s.t;
         toast('Ревизия ' + TK(i) + ': все четыре задвижки ходят. Записал в журнал.', 'good');
       }
@@ -564,8 +570,8 @@ G.Act = (() => {
     G.UI.reopen();
   }
 
-  return { inv, has, tool, dur, isoReasons, dryReasons, needItems, valveToggle, valveUnstick, valveTighten, valveRepack,
+  return { inv, has, tool, dur, why, vacationSeason, vacationPay, valveToggle, valveUnstick, valveTighten, valveRepack,
     valveReplace, valveRegasket, pumpStart, pumpStop, pumpLube, pumpBearings, pumpSeal, drain, feed, corr, gvsSet,
     cleanFilter, flush, installReg, obhod, eat, machineCoffee, sleep, tv, shower, read, fishing, bleedAir, clampLeak,
-    meter, job, callBrigade, talk, wellDown, wellLock, wellToggle, wellUnstick, wellRevise, wellStickP, shopOpen, buy, order, circName, take, pressReasons, pressTest, vacation };
+    meter, job, callBrigade, talk, wellDown, wellLock, wellToggle, wellUnstick, wellRevise, wellStickP, shopOpen, buy, order, circName, take, pressTest, vacation };
 })();

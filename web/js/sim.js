@@ -55,6 +55,8 @@ G.Sim = (() => {
   // чистое изменение давления отопления при открытой подпитке, бар/мин
   const feedNetRate = (S) => (S.ev.hvs ? 0 : FEED_RATE) - heatLeak(S) / 60 - (S.heat.drain ? 1 : 0);
   const anyOn = (S, c) => S.pumps.some((p) => p.circ === c && p.on);
+  // потолок нагрева контура: сетевая вода минус недогрев заросшего ТО / ВВП
+  const maxT = (S, c) => (c === 'heat' ? S.tnet - 4 - S.heat.foul * 0.25 : S.tnet - 3 - S.gvs.foul * 0.15);
   // насос «на закрытую задвижку»: на ЦТП задвижки открыты — значит, перекрыты все камеры
   const deadMsg = (p, ctpOpen) => (ctpOpen ? 'Насос ' + p.id + ' качает в закрытые камеры: во всех ТК перекрыт ввод на дома!' : 'Насос ' + p.id + ' работает на закрытую задвижку!');
 
@@ -101,9 +103,8 @@ G.Sim = (() => {
     H.ps = U.clamp(H.ps + dps, 0, 9);
 
     const sched = tSched(S.tout) + H.corr;
-    const maxT = S.tnet - 4 - H.foul * 0.25;
     const flowing = H.q > 0.05;
-    const goal = season && flowing ? Math.min(sched, maxT) : 22;
+    const goal = season && flowing ? Math.min(sched, maxT(S, 'heat')) : 22;
     const k = flowing ? 0.06 : 0.008;
     H.t1 += (goal - H.t1) * k;
     let tin = 0;
@@ -160,8 +161,7 @@ G.Sim = (() => {
     W.q += (circ - W.q) * 0.3;
     if (W.q < 0.001) W.q = 0;
     const hasWater = W.ps > 1 && open3;
-    const maxT = S.tnet - 3 - W.foul * 0.15;
-    const goal = hasWater ? Math.min(W.set, maxT) - gb * 12 : 20;
+    const goal = hasWater ? Math.min(W.set, maxT(S, 'gvs')) - gb * 12 : 20;
     W.t3 += (goal - W.t3) * (hasWater ? 0.08 : 0.01);
     const t4goal = hasWater ? W.t3 - (W.q > 0.3 ? 6 : 22) : 20;
     W.t4 += (t4goal - W.t4) * 0.05;
@@ -285,6 +285,6 @@ G.Sim = (() => {
     G.Ev.tick(S, season);
   }
 
-  return { step, netReturn, heatLeak, wellOpen, burstLeakK, burstIsolated, feedNetRate, P_LOW, P_CLOSE, P_WARN, P_HIGH, FEED_RATE, seasonal, heatSeason, tSched, drawProfile, pumpEff, headOf, pipeOpen, leakOf, sealLeak,
+  return { step, netReturn, heatLeak, maxT, wellOpen, burstLeakK, burstIsolated, feedNetRate, P_LOW, P_CLOSE, P_WARN, P_HIGH, FEED_RATE, seasonal, heatSeason, tSched, drawProfile, pumpEff, headOf, pipeOpen, leakOf, sealLeak,
     valveLeak, flangeLeak, circPumps, anyOn, GLAND };
 })();

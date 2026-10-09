@@ -43,6 +43,43 @@ G.R = (() => {
     ctx.fillStyle = color || '#fff';
     ctx.fillText(s, x, y);
   }
+  // ---------- кэш статичного фона
+  // Неизменная часть сцены (градиенты, стены, пятна, мебель) рисуется в offscreen-канвас размером с экран
+  // и перерисовывается только при смене ключа; в кадре — один drawImage в целых пикселях, без пересэмплинга.
+  // Канвас один на все сцены (на экране всегда одна сцена) — лишней памяти ровно один экран.
+  // Фон помещений непрозрачен целиком (opaque): такой канвас копируется без смешивания; улице нужна прозрачность.
+  // Не вызывать getImageData на #cv: Chrome переведёт его на CPU, и каждый bgBlit станет чтением кэша из GPU.
+  const BG = { c: null, x: null, key: null, opaque: null };
+  document.addEventListener('visibilitychange', () => { BG.key = null; });
+  function bgLayer(key, opaque, draw) {
+    // при дробном размере экрана в px устройства крайний столбец/строка закрыт сценой наполовину — там нужна прозрачность
+    opaque = opaque && cv.width <= LW * dpr * scale && cv.height <= LH * dpr * scale;
+    if (!BG.c || BG.opaque !== opaque) {
+      BG.c = document.createElement('canvas'); BG.x = BG.c.getContext('2d', { alpha: !opaque }); BG.opaque = opaque; BG.key = null;
+      // после потери GPU-контекста (Android свернул приложение) содержимое offscreen-канваса пропадает
+      BG.c.addEventListener('contextrestored', () => { BG.key = null; });
+    }
+    if (BG.c.width !== cv.width || BG.c.height !== cv.height) { BG.c.width = cv.width; BG.c.height = cv.height; BG.key = null; }
+    key += '|' + LW + '|' + LH + '|' + dpr * scale;
+    if (BG.key !== key) {
+      const main = ctx, mtx = tx, mty = ty;
+      ctx = BG.x;
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, BG.c.width, BG.c.height);
+      // каждый раз с чистого состояния (lineWidth и пр.), чтобы фон не зависел от того, какая сцена кэшировалась раньше
+      ctx.save(); ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+      // исключение внутри draw() не должно оставить ctx указывающим на кэш — иначе экран замрёт навсегда
+      try { draw(); BG.key = key; } finally { ctx.restore(); ctx = main; tx = mtx; ty = mty; }
+    }
+  }
+  // вывести полосу строк кэша [y0, y1) (логические y) как есть, в пикселях устройства
+  function bgBlit(y0, y1) {
+    const k = dpr * scale, h = BG.c.height;
+    const r0 = y0 === undefined ? 0 : U.clamp(Math.floor(y0 * k), 0, h), r1 = y1 === undefined ? h : U.clamp(Math.ceil(y1 * k), 0, h);
+    if (r1 <= r0 || !BG.c.width) return; // канвас нулевой ширины drawImage не принимает (исключение)
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(BG.c, 0, r0, BG.c.width, r1 - r0, 0, r0, BG.c.width, r1 - r0);
+    ctx.restore();
+  }
   function tag(s, x, y, bg, fg, size) {
     size = size || 13;
     ctx.font = 'bold ' + size + 'px ' + FONT;
@@ -156,13 +193,18 @@ G.R = (() => {
     const gap = (w - cols * 18) / (cols + 1);
     const night = 1 - L;
     const hourBlock = Math.floor(s.t / 90);
-    for (let f = 0; f < fl; f++) {
-      for (let c = 0; c < cols; c++) {
-        const wx = x + gap + c * (18 + gap), wy = gy - 12 - (f + 1) * fh + 6;
-        const lit = night > 0.25 && U.hash(hd.id * 31 + f, c, hourBlock) < (U.hour(s.t) > 0.5 && U.hour(s.t) < 5.5 ? 0.12 : 0.55);
-        rect(wx, wy, 18, 16, mix('#2a3b52', '#8fb2cf', L * 0.8));
-        rect(wx, wy + 7, 18, 1.5, 'rgba(255,255,255,.25)');
-        if (lit) lights.push([wx, wy, 18, 16, U.hash(hd.id, f, c) < 0.3 ? '#ffe7a8' : '#ffd27a']);
+    // окна не пересекаются: сначала все стёкла одним цветом, потом все блики — без смены fillStyle на каждом окне
+    const wxs = [];
+    for (let c = 0; c < cols; c++) wxs.push(x + gap + c * (18 + gap));
+    const wy0 = (f) => gy - 12 - (f + 1) * fh + 6;
+    ctx.fillStyle = mix('#2a3b52', '#8fb2cf', L * 0.8);
+    for (let f = 0; f < fl; f++) for (let c = 0; c < cols; c++) ctx.fillRect(wxs[c], wy0(f), 18, 16);
+    ctx.fillStyle = 'rgba(255,255,255,.25)';
+    for (let f = 0; f < fl; f++) for (let c = 0; c < cols; c++) ctx.fillRect(wxs[c], wy0(f) + 7, 18, 1.5);
+    if (night > 0.25) {
+      const h = U.hour(s.t), pLit = h > 0.5 && h < 5.5 ? 0.12 : 0.55;
+      for (let f = 0; f < fl; f++) for (let c = 0; c < cols; c++) {
+        if (U.hash(hd.id * 31 + f, c, hourBlock) < pLit) lights.push([wxs[c], wy0(f), 18, 16, U.hash(hd.id, f, c) < 0.3 ? '#ffe7a8' : '#ffd27a']);
       }
     }
     // подъезды
@@ -186,8 +228,7 @@ G.R = (() => {
     rr(bx - bw / 2, by - 13, bw, 24, 7); ctx.fillStyle = 'rgba(14,20,30,.82)'; ctx.fill();
     circle(bx - bw / 2 + 10, by - 1, 4.5, hs.sat > 60 ? '#5cd65c' : hs.sat > 35 ? '#f0c040' : '#f05040');
     text(lbl, bx + 5, by - 1, 13, (season && hs.tin < 18.5) || hs.ttap < 50 ? '#ff9a8a' : '#e8f0ff', 'center', true, false);
-    const tasks = G.S.tasks.filter((k) => !k.done && !k.failed && k.ref === hd.id - 1 && ['heat', 'hot', 'overheat', 'air', 'leak', 'meter', 'job', 'burst', 'wellOpen'].includes(k.type));
-    if (tasks.length) {
+    if (G.Ev.houseTasks(hd.id - 1).length) {
       const yy = by - 30 + Math.sin(anim * 5) * 3;
       circle(bx, yy, 11, '#f0a020');
       text('!', bx, yy + 1, 16, '#1a1205', 'center', true, false);
@@ -316,7 +357,14 @@ G.R = (() => {
     const gy = LH - 118;
     const camX = cam.street = U.clamp(cam.street, 0, Math.max(0, D.STREET_W - LW));
     tx = -camX; ty = 0;
-    ctx.fillStyle = skyGrad(0, gy, L, s); ctx.fillRect(0, 0, LW, gy);
+    // небо и земля — градиенты во весь экран: в кэше, меняются только со светом и осадками
+    bgLayer('street:' + L + ':' + !!s.wx.prec, false, () => {
+      ctx.fillStyle = skyGrad(0, gy, L, s); ctx.fillRect(0, 0, LW, gy);
+      const sg = ctx.createLinearGradient(0, gy + 16, 0, LH);
+      sg.addColorStop(0, '#5a4532'); sg.addColorStop(1, '#2c2219');
+      ctx.fillStyle = sg; ctx.fillRect(0, gy + 16, LW + 1, LH - gy); // +1: в мире земля шире экрана
+    });
+    bgBlit(0, gy);
     const h = U.hour(s.t);
     if (L > 0.05) { const sx = LW * U.clamp((h - 6) / 14, 0, 1); circle(sx, 80 + Math.abs(h - 13) * 10, 18, s.wx.prec ? 'rgba(255,255,230,.35)' : '#fff3b0'); }
     else circle(LW * 0.75, 90, 12, '#e8ecf5');
@@ -331,16 +379,16 @@ G.R = (() => {
     const season = snow || d.m === 11 || d.m <= 2 ? 'winter' : d.m >= 8 && d.m <= 10 ? 'autumn' : d.m === 3 || d.m === 4 ? 'spring' : 'summer';
     ctx.save(); ctx.translate(tx, 0);
     const lights = [];
-    [330, 610, 905, 1220, 1530, 1840, 2150, 2450].forEach((x, i) => drawTree(x, gy, season, i));
+    // за краем экрана не рисуем (улица вдвое шире экрана): x0..x1 — видимая полоса мира
+    const vis = (x0, x1) => x1 >= camX - 4 && x0 <= camX + LW + 4;
+    [330, 610, 905, 1220, 1530, 1840, 2150, 2450].forEach((x, i) => { if (vis(x - 52, x + 52)) drawTree(x, gy, season, i); });
     drawShop(gy, L, lights, snow, s);
     drawCTPBuilding(gy, L, lights, snow, s);
-    D.HOUSES.forEach((hd, i) => drawHouseBlock(hd, s.houses[i], gy, L, lights, snow, s));
+    D.HOUSES.forEach((hd, i) => { if (vis(hd.x - 3, hd.x + hd.w + 3)) drawHouseBlock(hd, s.houses[i], gy, L, lights, snow, s); });
     [300, 625, 930, 1245, 1555, 1865, 2175].forEach((x) => { rect(x - 2, gy - 120, 4, 120, '#3b3f45'); rect(x - 2, gy - 120, 22, 4, '#3b3f45'); if (1 - L > 0.3) lights.push([x + 12, gy - 117, 10, 5, '#ffe9a6', 1]); });
     // тротуар и земля
     rect(-20, gy, D.STREET_W + 40, 16, snow ? '#e9eef2' : '#6c6c6c');
-    const sg = ctx.createLinearGradient(0, gy + 16, 0, LH);
-    sg.addColorStop(0, '#5a4532'); sg.addColorStop(1, '#2c2219');
-    ctx.fillStyle = sg; ctx.fillRect(-20, gy + 16, D.STREET_W + 40, LH - gy);
+    bgBlit(gy + 16, LH);
     drawStreetPipes(gy, s);
     drawMan(s.px, gy + 13, P.dir, P.walking ? anim * 12 : 0, 0.78);
     ctx.restore();
@@ -500,54 +548,62 @@ G.R = (() => {
       cam.ctp += (tgt - cam.ctp) * 0.18;
       if (Math.abs(tgt - cam.ctp) < 1.5) { cam.ctp = tgt; camTo.ctp = null; }
     }
-    const camX = cam.ctp = LW >= W && !pad ? -(LW - W) / 2 : cam.ctp > max ? cam.ctp + (max - cam.ctp) * 0.18 : U.clamp(cam.ctp, 0, max);
+    // панель закрыли — камера плавно возвращается от края; остаток меньше полупикселя экрана добираем сразу,
+    // иначе приближение к краю длится ~3 с и всё это время меняет ключ кэша фона
+    const back = cam.ctp + (max - cam.ctp) * 0.18;
+    const camX = cam.ctp = LW >= W && !pad ? -(LW - W) / 2 : cam.ctp > max ? ((back - max) * dpr * scale < 0.5 ? max : back) : U.clamp(cam.ctp, 0, max);
     tx = -camX; ty = Math.max(0, (LH - 540) / 2);
-    // фон
-    rect(0, 0, LW, LH, '#cfcabb');
+    // фон: стены, пол, лампы, мебель поста — меняется только с камерой
+    bgLayer('ctp:' + tx + ':' + ty, true, () => {
+      rect(0, 0, LW, LH, '#cfcabb');
+      ctx.translate(tx, ty);
+      rect(-400, -200, W + 800, 450, '#cfcabb');
+      rect(-400, 250, W + 800, 255, '#46706a');
+      rect(-400, 248, W + 800, 4, '#2f4f4a');
+      for (let k = 0; k < 8; k++) circle(140 + k * 177, 60 + U.hash(k, 5) * 120, 18 + U.hash(k, 6) * 26, 'rgba(120,110,80,.08)');
+      const fg = ctx.createLinearGradient(0, CT.floor, 0, CT.floor + 80);
+      fg.addColorStop(0, '#7b7a74'); fg.addColorStop(1, '#5d5c57');
+      ctx.fillStyle = fg; ctx.fillRect(-400, CT.floor, W + 800, LH);
+      ctx.strokeStyle = 'rgba(0,0,0,.15)';
+      for (let k = -4; k < 30; k++) { ctx.beginPath(); ctx.moveTo(k * 60, CT.floor); ctx.lineTo(k * 60 - 30, CT.floor + 60); ctx.stroke(); }
+      // лампы
+      [300, 760, 1200].forEach((x) => { rect(x - 50, 52, 100, 8, '#ddd'); rect(x - 46, 60, 92, 4, '#fffbe8');
+        const g = ctx.createLinearGradient(0, 60, 0, 300); g.addColorStop(0, 'rgba(255,250,220,.18)'); g.addColorStop(1, 'rgba(255,250,220,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(x - 46, 64); ctx.lineTo(x + 46, 64); ctx.lineTo(x + 140, 300); ctx.lineTo(x - 140, 300); ctx.fill(); });
+      // стена справа
+      rect(CT.wall, -200, 60, LH + 400, '#8b4a34');
+      ctx.strokeStyle = 'rgba(0,0,0,.2)';
+      for (let yy = -200; yy < LH + 200; yy += 10) { ctx.beginPath(); ctx.moveTo(CT.wall, yy); ctx.lineTo(CT.wall + 60, yy); ctx.stroke(); }
+      // ---- пост
+      rect(30, 345, 72, 160, '#5d6b78'); rect(34, 349, 64, 152, '#6e7d8b'); rect(86, 420, 6, 14, '#222');
+      rr(36, 318, 60, 20, 3); ctx.fillStyle = '#1b5e20'; ctx.fill(); text('ВЫХОД', 66, 328, 12, '#fff', 'center', true, false);
+      rect(120, 430, 86, 75, '#8a6236'); rect(124, 434, 78, 67, '#9c7142');
+      text('ЗИП', 163, 468, 16, '#5a3a1a', 'center', true, false);
+      rect(130, 405, 50, 25, '#6b8fa8'); rect(150, 388, 34, 18, '#b7a07a');
+      rect(215, 440, 110, 8, '#6d4c2f'); rect(222, 448, 6, 57, '#5a3d25'); rect(312, 448, 6, 57, '#5a3d25');
+      rect(236, 430, 40, 10, '#1d4f91'); rect(256, 430, 1.5, 10, '#fff');
+      rr(285, 418, 20, 22, 4); ctx.fillStyle = '#ccc'; ctx.fill(); rect(303, 424, 6, 3, '#aaa');
+      rect(330, 455, 26, 6, '#4a3a2a'); rect(352, 420, 5, 85, '#4a3a2a');
+      text('Журнал', 268, 418, 11, '#fff', 'center', true);
+      // шкаф управления: корпус, табло, подписи насосов (лампочки и цифры — поверх, в кадре)
+      rect(130, 150, 110, 180, '#8f979f'); rect(134, 154, 102, 172, '#a7aeb5');
+      rect(146, 166, 78, 26, '#0e1a12');
+      s.pumps.forEach((p, k) => text(p.id, 155 + k * 20, 226, 9, '#222', 'center', true, false));
+      rect(225, 240, 5, 20, '#555');
+      rr(258, 150, 60, 80, 2); ctx.fillStyle = '#efe9d8'; ctx.fill();
+      text('ГРАФИК', 288, 160, 9, '#333', 'center', true, false);
+      ctx.strokeStyle = '#c62828'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(264, 222); ctx.quadraticCurveTo(290, 200, 312, 172); ctx.stroke();
+    });
+    bgBlit();
     ctx.save(); ctx.translate(tx, ty);
-    rect(-400, -200, W + 800, 450, '#cfcabb');
-    rect(-400, 250, W + 800, 255, '#46706a');
-    rect(-400, 248, W + 800, 4, '#2f4f4a');
-    for (let k = 0; k < 8; k++) circle(140 + k * 177, 60 + U.hash(k, 5) * 120, 18 + U.hash(k, 6) * 26, 'rgba(120,110,80,.08)');
-    const fg = ctx.createLinearGradient(0, CT.floor, 0, CT.floor + 80);
-    fg.addColorStop(0, '#7b7a74'); fg.addColorStop(1, '#5d5c57');
-    ctx.fillStyle = fg; ctx.fillRect(-400, CT.floor, W + 800, LH);
-    ctx.strokeStyle = 'rgba(0,0,0,.15)';
-    for (let k = -4; k < 30; k++) { ctx.beginPath(); ctx.moveTo(k * 60, CT.floor); ctx.lineTo(k * 60 - 30, CT.floor + 60); ctx.stroke(); }
-    // лампы
-    [300, 760, 1200].forEach((x) => { rect(x - 50, 52, 100, 8, '#ddd'); rect(x - 46, 60, 92, 4, '#fffbe8');
-      const g = ctx.createLinearGradient(0, 60, 0, 300); g.addColorStop(0, 'rgba(255,250,220,.18)'); g.addColorStop(1, 'rgba(255,250,220,0)');
-      ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(x - 46, 64); ctx.lineTo(x + 46, 64); ctx.lineTo(x + 140, 300); ctx.lineTo(x - 140, 300); ctx.fill(); });
-    // стена справа
-    rect(CT.wall, -200, 60, LH + 400, '#8b4a34');
-    ctx.strokeStyle = 'rgba(0,0,0,.2)';
-    for (let yy = -200; yy < LH + 200; yy += 10) { ctx.beginPath(); ctx.moveTo(CT.wall, yy); ctx.lineTo(CT.wall + 60, yy); ctx.stroke(); }
-    // ---- пост
-    rect(30, 345, 72, 160, '#5d6b78'); rect(34, 349, 64, 152, '#6e7d8b'); rect(86, 420, 6, 14, '#222');
-    rr(36, 318, 60, 20, 3); ctx.fillStyle = '#1b5e20'; ctx.fill(); text('ВЫХОД', 66, 328, 12, '#fff', 'center', true, false);
     addHit('door', 28, 315, 80, 192);
-    rect(120, 430, 86, 75, '#8a6236'); rect(124, 434, 78, 67, '#9c7142');
-    text('ЗИП', 163, 468, 16, '#5a3a1a', 'center', true, false);
-    rect(130, 405, 50, 25, '#6b8fa8'); rect(150, 388, 34, 18, '#b7a07a');
     addHit('box', 116, 384, 96, 122);
-    rect(215, 440, 110, 8, '#6d4c2f'); rect(222, 448, 6, 57, '#5a3d25'); rect(312, 448, 6, 57, '#5a3d25');
-    rect(236, 430, 40, 10, '#1d4f91'); rect(256, 430, 1.5, 10, '#fff');
-    rr(285, 418, 20, 22, 4); ctx.fillStyle = '#ccc'; ctx.fill(); rect(303, 424, 6, 3, '#aaa');
-    rect(330, 455, 26, 6, '#4a3a2a'); rect(352, 420, 5, 85, '#4a3a2a');
-    text('Журнал', 268, 418, 11, '#fff', 'center', true);
     addHit('desk', 210, 405, 150, 100);
-    // шкаф управления
-    rect(130, 150, 110, 180, '#8f979f'); rect(134, 154, 102, 172, '#a7aeb5');
-    rect(146, 166, 78, 26, '#0e1a12');
     const sched = G.Sim.tSched(s.tout) + s.heat.corr;
     text('Т1→' + Math.round(sched) + '°', 185, 179, 13, '#5cff7a', 'center', true, false);
-    s.pumps.forEach((p, k) => { circle(155 + k * 20, 210, 6, p.broken ? '#ff3b30' : p.on ? '#4cff5c' : '#3b3b3b'); text(p.id, 155 + k * 20, 226, 9, '#222', 'center', true, false); });
-    rect(225, 240, 5, 20, '#555');
+    s.pumps.forEach((p, k) => circle(155 + k * 20, 210, 6, p.broken ? '#ff3b30' : p.on ? '#4cff5c' : '#3b3b3b'));
     text(s.ev.power ? 'НЕТ НАПРЯЖЕНИЯ' : 'ЩУ ЦТП-7', 185, 300, 10, s.ev.power ? '#b3261e' : '#333', 'center', true, false);
     addHit('cabinet', 126, 146, 118, 188);
-    rr(258, 150, 60, 80, 2); ctx.fillStyle = '#efe9d8'; ctx.fill();
-    text('ГРАФИК', 288, 160, 9, '#333', 'center', true, false);
-    ctx.strokeStyle = '#c62828'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(264, 222); ctx.quadraticCurveTo(290, 200, 312, 172); ctx.stroke();
     // ---- ввод теплосети от ТЭЦ (первичный контур)
     const H = s.heat, Wg = s.gvs;
     const season = G.Sim.heatSeason(s.t);
@@ -642,24 +698,29 @@ G.R = (() => {
   function boxView() { tx = (LW - 960) / 2; ty = Math.max(0, (LH - 540) / 2); }
   function drawHome(s, P) {
     boxView();
-    rect(0, 0, LW, LH, '#d9c9a3');
+    // стены, пол, дверь, ковёр и кровать не меняются
+    bgLayer('home:' + tx + ':' + ty, true, () => {
+      rect(0, 0, LW, LH, '#d9c9a3');
+      ctx.translate(tx, ty);
+      for (let x = -400; x < 1400; x += 24) rect(x, -200, 10, 680, '#d1bf95');
+      rect(-400, 470, 1800, LH, '#7d4f2e');
+      for (let x = -400; x < 1400; x += 70) rect(x, 470, 2, LH, '#6a4126');
+      rect(-400, 462, 1800, 10, '#5d3a20');
+      // дверь
+      rect(20, 228, 86, 242, '#7b5434'); rect(28, 236, 70, 226, '#8f6640'); circle(88, 360, 4, '#d4b25a');
+      text('Выход', 63, 215, 12, '#5a3a1a', 'center', true, false);
+      // ковёр и кровать
+      rect(140, 160, 200, 170, '#8e2a2a'); rect(148, 168, 184, 154, '#a83a2e');
+      for (let k = 0; k < 4; k++) for (let j = 0; j < 3; j++) { ctx.save(); ctx.translate(178 + k * 42, 200 + j * 46); ctx.rotate(Math.PI / 4); rect(-10, -10, 20, 20, k % 2 ? '#e3b44a' : '#2a4f7a'); ctx.restore(); }
+      rect(120, 400, 230, 50, '#6b4a2f'); rect(120, 360, 16, 110, '#5a3d25'); rect(334, 380, 16, 90, '#5a3d25');
+      rr(140, 382, 196, 26, 6); ctx.fillStyle = '#e8e4dc'; ctx.fill();
+      rr(150, 368, 60, 22, 8); ctx.fillStyle = '#f5f2ea'; ctx.fill();
+      rr(200, 376, 136, 34, 6); ctx.fillStyle = '#4f6fa8'; ctx.fill();
+    });
+    bgBlit();
     ctx.save(); ctx.translate(tx, ty);
-    for (let x = -400; x < 1400; x += 24) rect(x, -200, 10, 680, '#d1bf95');
-    rect(-400, 470, 1800, LH, '#7d4f2e');
-    for (let x = -400; x < 1400; x += 70) rect(x, 470, 2, LH, '#6a4126');
-    rect(-400, 462, 1800, 10, '#5d3a20');
-    // дверь
-    rect(20, 228, 86, 242, '#7b5434'); rect(28, 236, 70, 226, '#8f6640'); circle(88, 360, 4, '#d4b25a');
-    text('Выход', 63, 215, 12, '#5a3a1a', 'center', true, false);
     addHit('door', 16, 200, 96, 272);
-    // ковёр и кровать
-    rect(140, 160, 200, 170, '#8e2a2a'); rect(148, 168, 184, 154, '#a83a2e');
-    for (let k = 0; k < 4; k++) for (let j = 0; j < 3; j++) { ctx.save(); ctx.translate(178 + k * 42, 200 + j * 46); ctx.rotate(Math.PI / 4); rect(-10, -10, 20, 20, k % 2 ? '#e3b44a' : '#2a4f7a'); ctx.restore(); }
-    rect(120, 400, 230, 50, '#6b4a2f'); rect(120, 360, 16, 110, '#5a3d25'); rect(334, 380, 16, 90, '#5a3d25');
-    rr(140, 382, 196, 26, 6); ctx.fillStyle = '#e8e4dc'; ctx.fill();
-    rr(150, 368, 60, 22, 8); ctx.fillStyle = '#f5f2ea'; ctx.fill();
     const sleeping = G.busy && G.busy.kind === 'sleep';
-    rr(200, 376, 136, 34, 6); ctx.fillStyle = '#4f6fa8'; ctx.fill();
     if (sleeping) { circle(186, 375, 10, '#efc09a'); text('Z z z', 210, 340 + Math.sin(anim * 2) * 5, 22, '#334', 'left', true, false); }
     addHit('bed', 116, 340, 240, 132);
     // окно
@@ -711,45 +772,52 @@ G.R = (() => {
   // ================= МАГАЗИН =================
   function drawShopIn(s, P) {
     boxView();
-    rect(0, 0, LW, LH, '#ddd6c4');
-    ctx.save(); ctx.translate(tx, ty);
-    for (let x = -400; x < 1400; x += 40) for (let y = -200; y < 470; y += 40) { ctx.strokeStyle = 'rgba(0,0,0,.06)'; ctx.strokeRect(x, y, 40, 40); }
-    rect(-400, 470, 1800, LH, '#8b8579');
-    rr(300, 70, 360, 40, 4); ctx.fillStyle = '#b3261e'; ctx.fill();
-    text('ПРОДУКТЫ · ХОЗТОВАРЫ', 480, 90, 20, '#fff', 'center', true, false);
-    for (let r = 0; r < 3; r++) {
-      rect(150, 160 + r * 70, 660, 8, '#7a5a3a');
-      for (let k = 0; k < 22; k++) {
-        const x = 156 + k * 30, h = 26 + U.hash(k, r) * 30;
-        const food = k < 11;
-        rect(x, 160 + r * 70 - h, 22, h, food ? ['#e53935', '#fdd835', '#43a047', '#1e88e5', '#fb8c00'][(k + r) % 5] : ['#78909c', '#8d6e63', '#b0bec5', '#c62828'][(k + r) % 4]);
-        if (!food && (k + r) % 4 === 3) { ctx.beginPath(); ctx.ellipse(x + 11, 160 + r * 70 - h - 4, 10, 3, 0, 0, Math.PI * 2); ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 3; ctx.stroke(); }
+    // магазин неподвижен целиком: рисуется один раз
+    bgLayer('shop:' + tx + ':' + ty, true, () => {
+      rect(0, 0, LW, LH, '#ddd6c4');
+      ctx.translate(tx, ty);
+      for (let x = -400; x < 1400; x += 40) for (let y = -200; y < 470; y += 40) { ctx.strokeStyle = 'rgba(0,0,0,.06)'; ctx.strokeRect(x, y, 40, 40); }
+      rect(-400, 470, 1800, LH, '#8b8579');
+      rr(300, 70, 360, 40, 4); ctx.fillStyle = '#b3261e'; ctx.fill();
+      text('ПРОДУКТЫ · ХОЗТОВАРЫ', 480, 90, 20, '#fff', 'center', true, false);
+      for (let r = 0; r < 3; r++) {
+        rect(150, 160 + r * 70, 660, 8, '#7a5a3a');
+        for (let k = 0; k < 22; k++) {
+          const x = 156 + k * 30, h = 26 + U.hash(k, r) * 30;
+          const food = k < 11;
+          rect(x, 160 + r * 70 - h, 22, h, food ? ['#e53935', '#fdd835', '#43a047', '#1e88e5', '#fb8c00'][(k + r) % 5] : ['#78909c', '#8d6e63', '#b0bec5', '#c62828'][(k + r) % 4]);
+          if (!food && (k + r) % 4 === 3) { ctx.beginPath(); ctx.ellipse(x + 11, 160 + r * 70 - h - 4, 10, 3, 0, 0, Math.PI * 2); ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 3; ctx.stroke(); }
+        }
       }
-    }
-    circle(480, 318, 16, '#efc09a'); circle(480, 300, 11, '#8a5a2a'); rect(462, 334, 36, 46, '#c94f6d'); rect(468, 344, 24, 36, '#fff');
-    rect(260, 380, 440, 90, '#9c7142'); rect(260, 380, 440, 10, '#c8a070');
-    rr(600, 350, 60, 32, 4); ctx.fillStyle = '#444'; ctx.fill(); rect(610, 356, 40, 12, '#7cfc9a');
-    text('Касса', 630, 400, 12, '#fff', 'center', true);
+      circle(480, 318, 16, '#efc09a'); circle(480, 300, 11, '#8a5a2a'); rect(462, 334, 36, 46, '#c94f6d'); rect(468, 344, 24, 36, '#fff');
+      rect(260, 380, 440, 90, '#9c7142'); rect(260, 380, 440, 10, '#c8a070');
+      rr(600, 350, 60, 32, 4); ctx.fillStyle = '#444'; ctx.fill(); rect(610, 356, 40, 12, '#7cfc9a');
+      text('Касса', 630, 400, 12, '#fff', 'center', true);
+      rect(30, 260, 80, 210, '#4d5a68'); rect(36, 266, 68, 150, '#cfe4f0');
+      text('Выход', 70, 246, 12, '#333', 'center', true, false);
+      drawMan(560, 518, -1, 0, 2.2);
+    });
+    bgBlit();
     addHit('counter', 256, 290, 450, 182);
-    rect(30, 260, 80, 210, '#4d5a68'); rect(36, 266, 68, 150, '#cfe4f0');
-    text('Выход', 70, 246, 12, '#333', 'center', true, false);
     addHit('door', 26, 236, 90, 236);
-    drawMan(560, 518, -1, 0, 2.2);
-    ctx.restore();
   }
 
   // ================= ПОДВАЛ =================
   function drawBasement(s, P) {
     boxView();
-    rect(0, 0, LW, LH, '#3e4144');
     const i = s.house, hs = s.houses[i], hd = D.HOUSES[i];
+    bgLayer('house:' + i + ':' + tx + ':' + ty, true, () => {
+      rect(0, 0, LW, LH, '#3e4144');
+      ctx.translate(tx, ty);
+      for (let k = 0; k < 40; k++) circle(U.hash(k, i) * 960, U.hash(k, 7) * 460, 10 + U.hash(k, 8) * 30, 'rgba(0,0,0,.08)');
+      rect(-400, 480, 1800, LH, '#2f2d29');
+      const g = ctx.createRadialGradient(480, 70, 10, 480, 200, 420);
+      g.addColorStop(0, 'rgba(255,240,190,.28)'); g.addColorStop(1, 'rgba(255,240,190,0)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, 960, 540);
+      rect(478, 40, 4, 20, '#222'); circle(480, 66, 8, '#fff6c8');
+    });
+    bgBlit();
     ctx.save(); ctx.translate(tx, ty);
-    for (let k = 0; k < 40; k++) circle(U.hash(k, i) * 960, U.hash(k, 7) * 460, 10 + U.hash(k, 8) * 30, 'rgba(0,0,0,.08)');
-    rect(-400, 480, 1800, LH, '#2f2d29');
-    const g = ctx.createRadialGradient(480, 70, 10, 480, 200, 420);
-    g.addColorStop(0, 'rgba(255,240,190,.28)'); g.addColorStop(1, 'rgba(255,240,190,0)');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, 960, 540);
-    rect(478, 40, 4, 20, '#222'); circle(480, 66, 8, '#fff6c8');
     const H = s.heat, W = s.gvs;
     const t1 = H.t1 - (1 - hd.dist) * 10;
     const tt = [t1, H.t2, hs.ttap, hs.ttap - 5];
@@ -800,30 +868,35 @@ G.R = (() => {
     const i = s.well, w = s.wells[i], hd = D.HOUSES[i], B = s.ev.burst;
     const leak = B && B.house === i ? G.Sim.burstLeakK(s) : 0;
     const L = daylight(s.t);
-    rect(0, 0, LW, LH, '#24221f');
+    // фон меняется только со светом из люка (рассвет/закат, осадки)
+    bgLayer('well:' + i + ':' + L + ':' + !!s.wx.prec + ':' + tx + ':' + ty, true, () => {
+      rect(0, 0, LW, LH, '#24221f');
+      ctx.translate(tx, ty);
+      // стены из бетонных блоков
+      rect(-400, -200, 1800, 900, '#4a4741');
+      ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 2;
+      for (let y = WL.ceil; y < WL.floor; y += 58) {
+        ctx.beginPath(); ctx.moveTo(-400, y); ctx.lineTo(1400, y); ctx.stroke();
+        for (let x = -400 + (y % 116 ? 60 : 0); x < 1400; x += 120) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 58); ctx.stroke(); }
+      }
+      for (let k = 0; k < 30; k++) circle(U.hash(k, i, 5) * 960, 40 + U.hash(k, 6) * 440, 6 + U.hash(k, 7) * 22, 'rgba(0,0,0,.09)');
+      // перекрытие и горловина люка — сверху свет с улицы
+      rect(-400, -200, 1800, WL.ceil + 200, '#38352f');
+      rect(WL.hatch - 38, -200, 76, WL.ceil + 200, skyGrad(-200, WL.ceil, L, s));
+      const g = ctx.createRadialGradient(WL.hatch, WL.ceil, 10, WL.hatch + 60, 300, 460);
+      g.addColorStop(0, 'rgba(255,240,200,' + (0.12 + 0.25 * L) + ')'); g.addColorStop(1, 'rgba(255,240,200,0)');
+      ctx.fillStyle = g; ctx.fillRect(-400, 0, 1800, WL.floor);
+      // переносная лампа
+      rect(759, WL.ceil, 2, 22, '#222'); circle(760, WL.ceil + 28, 7, '#fff3c0');
+      const g2 = ctx.createRadialGradient(760, WL.ceil + 28, 4, 760, 220, 320);
+      g2.addColorStop(0, 'rgba(255,230,160,.25)'); g2.addColorStop(1, 'rgba(255,230,160,0)');
+      ctx.fillStyle = g2; ctx.fillRect(400, WL.ceil, 600, WL.floor - WL.ceil);
+      // скобы-ступени
+      for (let y = WL.ceil + 16; y < WL.floor - 10; y += 36) { rect(WL.hatch - 20, y, 40, 4, '#8a8f96'); rect(WL.hatch - 20, y - 8, 4, 12, '#6d7279'); rect(WL.hatch + 16, y - 8, 4, 12, '#6d7279'); }
+      rect(-400, WL.floor, 1800, 300, '#2f2c27');
+    });
+    bgBlit();
     ctx.save(); ctx.translate(tx, ty);
-    // стены из бетонных блоков
-    rect(-400, -200, 1800, 900, '#4a4741');
-    ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 2;
-    for (let y = WL.ceil; y < WL.floor; y += 58) {
-      ctx.beginPath(); ctx.moveTo(-400, y); ctx.lineTo(1400, y); ctx.stroke();
-      for (let x = -400 + (y % 116 ? 60 : 0); x < 1400; x += 120) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 58); ctx.stroke(); }
-    }
-    for (let k = 0; k < 30; k++) circle(U.hash(k, i, 5) * 960, 40 + U.hash(k, 6) * 440, 6 + U.hash(k, 7) * 22, 'rgba(0,0,0,.09)');
-    // перекрытие и горловина люка — сверху свет с улицы
-    rect(-400, -200, 1800, WL.ceil + 200, '#38352f');
-    rect(WL.hatch - 38, -200, 76, WL.ceil + 200, skyGrad(-200, WL.ceil, L, s));
-    const g = ctx.createRadialGradient(WL.hatch, WL.ceil, 10, WL.hatch + 60, 300, 460);
-    g.addColorStop(0, 'rgba(255,240,200,' + (0.12 + 0.25 * L) + ')'); g.addColorStop(1, 'rgba(255,240,200,0)');
-    ctx.fillStyle = g; ctx.fillRect(-400, 0, 1800, WL.floor);
-    // переносная лампа
-    rect(759, WL.ceil, 2, 22, '#222'); circle(760, WL.ceil + 28, 7, '#fff3c0');
-    const g2 = ctx.createRadialGradient(760, WL.ceil + 28, 4, 760, 220, 320);
-    g2.addColorStop(0, 'rgba(255,230,160,.25)'); g2.addColorStop(1, 'rgba(255,230,160,0)');
-    ctx.fillStyle = g2; ctx.fillRect(400, WL.ceil, 600, WL.floor - WL.ceil);
-    // скобы-ступени
-    for (let y = WL.ceil + 16; y < WL.floor - 10; y += 36) { rect(WL.hatch - 20, y, 40, 4, '#8a8f96'); rect(WL.hatch - 20, y - 8, 4, 12, '#6d7279'); rect(WL.hatch + 16, y - 8, 4, 12, '#6d7279'); }
-    rect(-400, WL.floor, 1800, 300, '#2f2c27');
     const H = s.heat, W = s.gvs;
     const tMain = [H.t1 - (1 - hd.dist) * 10, H.t2, W.t3, W.t4];
     const qMain = [H.q, H.q, W.ps > 1 ? 0.6 + W.q * 0.4 : 0, W.q];
@@ -895,8 +968,11 @@ G.R = (() => {
     ctx.fillStyle = '#ffd36b'; ctx.fill();
     ctx.strokeStyle = '#3a2a08'; ctx.lineWidth = 2.5; ctx.stroke();
     ctx.restore();
+    // кольцо — тоже в save/restore: иначе lineWidth = 3 «протекает» в следующий кадр (пол ЦТП и сетка магазина толще)
+    ctx.save();
     ctx.strokeStyle = 'rgba(255,211,107,' + (0.5 + 0.4 * Math.sin(anim * 6)) + ')'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.arc(x, y + 14, 30, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
   }
   // координаты объектов ЦТП (мир) — для списка оборудования и обучения
   function objPos(id) {

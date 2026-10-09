@@ -151,8 +151,16 @@ G.D = (() => {
     { text: 'поставить фильтр на воду', min: 45, pay: [700, 1200] },
     { text: 'заменить радиатор в спальне', min: 150, pay: [4000, 6000] },
   ];
+  // длительность техкарты целиком, мин (без учёта разряда)
+  const procMin = (key) => PROCS[key].steps.length * PROCS[key].stepMin;
+  // тепловая камера перед домом i: «ТК-1»…«ТК-5»
+  const TK = (i) => 'ТК-' + (i + 1);
+  // состав заказа склада: «Задвижка … ×1, Прокладка … ×2»
+  const itemsText = (items) => Object.keys(items).map((id) => ITEMS[id].name + ' ×' + items[id]).join(', ');
+
   const NAMES = ['Зинаида Петровна', 'Валентина Ивановна', 'Сергей из 45-й', 'Тамара Николаевна', 'Олег Палыч',
     'Людмила Сергеевна', 'Виктор Степанович', 'Ирина (кв. 7)', 'Баба Нюра', 'Аркадий Борисович', 'Марина с третьего'];
 
-  return { ITEMS, SHOP_ORDER, SKLAD_LIMIT, HOUSES, PLACES, STREET_W, wellX, WELL_PIPES, RANKS, PIPES, PROCS, DECOYS, JOBS, NAMES };
+  return { ITEMS, SHOP_ORDER, SKLAD_LIMIT, HOUSES, PLACES, STREET_W, wellX, WELL_PIPES, RANKS, PIPES, PROCS, DECOYS, JOBS, NAMES,
+    procMin, TK, itemsText };
 })();

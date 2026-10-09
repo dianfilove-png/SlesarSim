@@ -11,7 +11,7 @@ G.Tut = (() => {
   };
   const panelOpen = () => !$('panel').classList.contains('hidden');
   const ptitle = () => $('p-title').textContent;
-  const gvsOn = (s) => s.pumps.some((p) => p.circ === 'gvs' && p.on);
+  const gvsOn = (s) => G.Sim.anyOn(s, 'gvs');
   const replaced = (s) => s.valves[4].replacedAt > (s.tut.t2 || 0);
   // цель-стрелка на канвасе ЦТП: центр объекта (стрелка рисуется над ним)
   const at = (id) => { const p = G.R.objPos(id); return { scene: 'ctp', x: p[0], y: p[1] - 14 }; };
@@ -70,7 +70,7 @@ G.Tut = (() => {
   ];
   const idx = (id) => STEPS.findIndex((x) => x.id === id);
 
-  let shown = null, lastScene = null, hl = null;
+  let shown = null, shownText = '', lastScene = null, hl = null;
   const active = () => { const s = G.S; return !!(s && s.tut && !s.tut.done && !s.over); };
   const step = () => (active() ? STEPS[G.S.tut.step] || null : null);
   const visible = () => {
@@ -130,7 +130,8 @@ G.Tut = (() => {
     lastScene = s.scene;
     if (changed) { shown = st.id; buildBubble(st); }
     if (!visible()) { hide(); return; }
-    $('tut').querySelector('.t-text').innerHTML = st.text + (st.live ? st.live(s) : '');
+    const txt = st.text + (st.live ? st.live(s) : '');
+    if (txt !== shownText) { shownText = txt; $('tut').querySelector('.t-text').innerHTML = txt; } // без изменений не трогаем — иначе каждые 0.2 с лишний layout
     $('tut').classList.remove('hidden');
     document.body.classList.add('tut-on');
     const el = st.dom ? st.dom(s) : null;

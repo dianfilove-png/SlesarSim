@@ -3,22 +3,23 @@
 
 G.MG = (() => {
   const U = G.U, D = G.D;
-  let root = null;
+  let root = null, gen = 0; // gen — номер открытой мини-игры: отложенные шаги брошенной работы не выполняются
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
   function open() {
     root = document.getElementById('mg');
+    gen++;
     root.innerHTML = '';
     root.classList.remove('hidden');
     G.UI.closePanel(true);
     return root;
   }
-  function close() { if (root) { root.classList.add('hidden'); root.innerHTML = ''; } }
+  function close() { gen++; if (root) { root.classList.add('hidden'); root.innerHTML = ''; } }
   const isOpen = () => root && !root.classList.contains('hidden');
   const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
   // ---------- болты
   function bolts(opts, done) {
-    const r = open();
+    const r = open(), my = gen;
     const ratchet = G.S.p.tools.ratchet;
     const N = 8;
     const B = [];
@@ -90,6 +91,7 @@ G.MG = (() => {
           phase = 'swap';
           draw();
           setTimeout(() => {
+            if (gen !== my) return;
             G.Main.advance(G.Act.dur(opts.swapMin));
             B.forEach((x) => { x.st = 'loose'; x.spin = 0; });
             phase = 'in';
@@ -116,6 +118,7 @@ G.MG = (() => {
         if (seq.length === N) {
           const q = Math.max(0, 100 - mistakes * 22);
           setTimeout(() => {
+            if (gen !== my) return;
             close();
             G.UI.toast('Качество сборки: ' + q + '%', q >= 70 ? 'good' : 'bad');
             done(q);

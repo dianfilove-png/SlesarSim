@@ -4,10 +4,8 @@ window.G = window.G || {};
 
 G.U = (() => {
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
-  const lerp = (a, b, k) => a + (b - a) * k;
   const rnd = (a, b) => a + Math.random() * (b - a);
   const rint = (a, b) => Math.floor(a + Math.random() * (b - a + 1));
-  const chance = (p) => Math.random() < p;
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
   const randn = () => {
     let u = 0, v = 0;
@@ -50,7 +48,6 @@ G.U = (() => {
   const MON = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
   const MON_S = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
   const WD = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-  const WD_FULL = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
   const cache = {};
   const dateOfDay = (day) => {
     if (cache[day]) return cache[day];
@@ -69,7 +66,6 @@ G.U = (() => {
   const date = (t) => dateOfDay(day(t));
   const clock = (t) => pad2(Math.floor(mod(t) / 60)) + ':' + pad2(Math.floor(mod(t) % 60));
   const dateStr = (t) => { const d = date(t); return WD[d.wd] + ', ' + d.d + ' ' + MON_S[d.m]; };
-  const dateLong = (t) => { const d = date(t); return d.d + ' ' + MON[d.m] + ' ' + d.y + ', ' + WD_FULL[d.wd]; };
   // нерабочие праздничные дни (м-д)
   const HOLIDAYS = ['1-1', '1-2', '1-3', '1-4', '1-5', '1-6', '1-7', '1-8', '2-23', '3-8', '5-1', '5-9', '6-12', '11-4'];
   const isHoliday = (t) => { const d = date(t); return HOLIDAYS.includes((d.m + 1) + '-' + d.d); };
@@ -81,6 +77,6 @@ G.U = (() => {
     return r;
   };
 
-  return { clamp, lerp, rnd, rint, chance, pick, randn, hash, pad2, plural, money, dur, deg, deg1,
-    MON, MON_S, WD, day, mod, hour, date, clock, dateStr, dateLong, isWorkday, isHoliday, nextAt };
+  return { clamp, rnd, rint, pick, randn, hash, pad2, plural, money, dur, deg, deg1,
+    MON, MON_S, WD, day, mod, hour, date, clock, dateStr, isWorkday, isHoliday, nextAt };
 })();
