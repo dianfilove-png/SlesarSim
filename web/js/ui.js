@@ -397,6 +397,8 @@ G.UI = (() => {
       }
     }, true);
   }
+  // на сколько процентов забитый грязевик режет расход отопления (как в Sim.circuitHeat)
+  const clogCut = (c) => Math.round(c * 0.75);
   function panelFilter() {
     const s = G.S;
     panel('Грязевик (фильтр на Т2)', (b) => {
@@ -404,6 +406,7 @@ G.UI = (() => {
       para(b, 'Ловит окалину, песок и прочий мусор из квартальной системы перед насосами.', true);
       kv(b, 'Перепад давления', (0.05 + c * 0.012).toFixed(2) + ' бар', c > 60 ? 'bad' : c > 35 ? 'warn' : 'ok');
       kv(b, 'Засор', c < 30 ? 'чистый' : c < 60 ? 'есть шлам' : 'забит — расход падает!', c < 30 ? 'ok' : c < 60 ? 'warn' : 'bad');
+      if (c >= 40 && G.Sim.heatSeason(s.t)) kv(b, 'Отопление', 'режет расход на ' + clogCut(c) + '%', c >= 60 ? 'bad' : 'warn');
       sect(b, 'Действия');
       const r = A().why('filter');
       btn(b, 'Почистить грязевик', () => A().cleanFilter(), { cls: r.length ? 'warn' : 'main', sub: reqSub(r, 'Прокладка ×1 · около ' + pdur('filter')) });
@@ -436,7 +439,9 @@ G.UI = (() => {
       if (H.auto) kv(b, 'Регулятор РД-3М', H.autoOn ? 'подпитывает' : 'держит 3.8–4.2 бар', 'ok');
       btn(b, H.feed ? 'Закрыть подпитку' : 'Открыть подпитку', () => A().feed(), { cls: 'main', sub: dur(1) + ' · около +0.06 бар/мин' });
       pressBtn(b);
-      if (!H.auto) btn(b, 'Установить регулятор подпитки', () => A().installReg(), { cls: inv('regulator') ? '' : 'warn', sub: inv('regulator') ? 'около ' + pdur('regulator') : 'Нужен регулятор РД-3М (склад, умение «Регулятор»)' });
+      // «Хозяйственник» вместо «Регулятора» — РД-3М склад не выдаст
+      if (!H.auto && !inv('regulator') && G.Ev.hasPerk('boss')) btn(b, 'Установить регулятор подпитки', () => {}, { disabled: true, sub: 'Нужно умение «Регулятор»' });
+      else if (!H.auto) btn(b, 'Установить регулятор подпитки', () => A().installReg(), { cls: inv('regulator') ? '' : 'warn', sub: inv('regulator') ? 'около ' + pdur('regulator') : 'Нужен регулятор РД-3М (склад, умение «Регулятор»)' });
       if (H.feed) para(b, s.speed ? 'Пока панель открыта, время идёт — манометр растёт на глазах.' : 'Игра на паузе (❚❚) — нажми ×1 или ×5, иначе давление не растёт.', true);
     }, true);
   }
@@ -512,10 +517,14 @@ G.UI = (() => {
       btn(r1, '−2°', () => A().corr(-2)); btn(r1, '+2°', () => A().corr(2));
       b.appendChild(r1);
       para(b, 'Жалобы на холод — подними коррекцию. На жару — опусти. Самый дальний и старый дом мёрзнет первым.', true);
+      if (s.upg.wctl && !s.upg.wctlOff) para(b, 'Контроллер сам двигает график раз в 3 ч — ручная правка перебивается.', true);
       const U2 = s.upg, have = ['wctl', 'modem', 'sms'].filter((id) => U2[id] || inv(id));
       if (have.length || U2.vfd.some(Boolean) || U2.magnet || U2.ballv.some(Boolean)) {
         sect(b, 'Модернизация ЦТП');
-        if (U2.wctl) kv(b, 'Погодный контроллер', 'держит дома 20–23°', 'ok');
+        if (U2.wctl) {
+          kv(b, 'Погодный контроллер', U2.wctlOff ? 'выключен — график вручную' : 'держит дома 20–23°', U2.wctlOff ? 'warn' : 'ok');
+          btn(b, U2.wctlOff ? 'Включить контроллер' : 'Выключить контроллер', () => A().wctlToggle(), { sub: U2.wctlOff ? 'Сам поправит график раз в 3 ч' : 'Коррекцию графика будешь крутить сам' });
+        }
         if (U2.modem) kv(b, 'Модемы узлов учёта', 'показания уходят сами', 'ok');
         if (U2.sms) kv(b, 'SMS-датчик давления', 'ниже 3 бар — SMS', 'ok');
         if (U2.vfd.some(Boolean)) kv(b, 'Частотники', s.pumps.filter((p, i) => U2.vfd[i]).map((p) => p.id).join(', '), 'ok');
@@ -688,6 +697,12 @@ G.UI = (() => {
     const Sm = G.Sim, wv = s.wells[i].v, season = Sm.heatSeason(s.t);
     if (season && !Sm.wellOpen(s, i, 'heat')) kv(b, 'Отопление', 'перекрыто в ' + TK(i), 'bad');
     else if (season && s.heat.ps < Sm.P_LOW) kv(b, 'Давление в отоплении', 'низкое (' + s.heat.ps.toFixed(1) + ' бар)', 'bad');
+    if (season) {
+      if (s.ev.power) kv(b, 'Отопление', 'нет света на ЦТП', 'bad');
+      else if (!s.pumps.some((p) => p.circ === 'heat' && p.on && !p.broken)) kv(b, 'Насосы отопления', 'стоят', 'bad');
+      if (s.heat.clog >= 40) kv(b, 'Мал расход', 'грязевик забит (−' + clogCut(s.heat.clog) + '%)', s.heat.clog >= 60 ? 'bad' : 'warn');
+      if (s.ev.netDrop) kv(b, 'ТЭЦ', 'снизила температуру сети', 'warn');
+    }
     if (!wv[2].open) kv(b, 'Подача ГВС', 'перекрыта в ' + TK(i), 'bad');
     else if (s.gvs.ps > 1 && (s.gvs.q <= 0.3 || !wv[3].open)) kv(b, 'Циркуляция ГВС', 'нет' + (wv[3].open ? '' : ' — Т4 перекрыта в ' + TK(i)), 'warn');
     kv(b, 'Настроение жильцов', Math.round(hs.sat) + '%', hs.sat > 60 ? 'ok' : hs.sat > 35 ? 'warn' : 'bad');
@@ -748,7 +763,8 @@ G.UI = (() => {
     w.v.forEach((v, k) => kv(b, D.PIPES[k + 1].full.replace(' — ', ' (') + ')', wellState(v), wellCls(v)));
     burstKv(b, i);
     if (w.fixAt !== null) kv(b, 'Подрядчики', 'заменят задвижку ' + U.dateStr(w.fixAt) + ', ' + U.clock(w.fixAt), 'warn');
-    kv(b, 'Ревизия', w.revAt >= 0 ? U.dateStr(w.revAt) : 'не проводилась', w.revAt >= 0 ? 'ok' : 'warn');
+    if (s.upg.ballv[i]) kv(b, 'Ревизия', 'шаровые краны — не нужна', 'ok');
+    else kv(b, 'Ревизия', w.revAt >= 0 ? U.dateStr(w.revAt) : 'не проводилась', w.revAt >= 0 ? 'ok' : 'warn');
   }
   // у люка на улице
   function panelHatch(i) {
@@ -759,7 +775,9 @@ G.UI = (() => {
       wellInfo(b, i);
       sect(b, 'Действия');
       const hot = B && B.house === i && !G.Sim.burstIsolated(s);
-      btn(b, 'Открыть люк и спуститься', () => A().wellDown(i), { cls: hot ? 'danger' : 'main', sub: dur(4) + (hot ? ' · внизу пар и кипяток — можно ошпариться!' : ' · крюком поддеть крышку') });
+      const suit = !!s.p.tools.suit;
+      btn(b, 'Открыть люк и спуститься', () => A().wellDown(i), { cls: hot ? 'danger' : 'main',
+        sub: dur(4) + (hot ? (suit ? ' · внизу пар — в термокостюме не страшно' : ' · внизу пар и кипяток — можно ошпариться!') : ' · крюком поддеть крышку') });
       if (B && B.house === i && B.called === null) btn(b, 'Вызвать аварийную бригаду на порыв!', () => A().callBrigade(), { cls: 'danger', sub: dur(5) });
       btn(b, 'Отойти', () => closePanel(), { cls: 'ghost' });
     }, true);
@@ -769,7 +787,9 @@ G.UI = (() => {
     const s = G.S;
     panel(() => 'Камера ' + TK(i) + ' — задвижки', (b) => {
       const w = s.wells[i], B = s.ev.burst;
-      para(b, 'Ответвление на ' + D.HOUSES[i].name.replace('Дом', 'дом') + '. Т1/Т2 закрыть — дом без отопления, Т3/Т4 — без горячей воды. Задвижки годами не трогали — могут закиснуть.', true);
+      const ball = s.upg.ballv[i];
+      if (ball) sect(b, 'Шаровые краны — не закисают');
+      para(b, 'Ответвление на ' + D.HOUSES[i].name.replace('Дом', 'дом') + '. Т1/Т2 закрыть — дом без отопления, Т3/Т4 — без горячей воды.' + (ball ? '' : ' Задвижки годами не трогали — могут закиснуть.'), true);
       burstKv(b, i);
       const need = B && B.house === i ? D.WELL_PIPES[B.pipe] : [];
       // что открыть после ремонта: задачи по отоплению и ГВС этого дома
@@ -786,10 +806,11 @@ G.UI = (() => {
           lock ? { disabled: true, sub: lock } : { cls: urgent ? 'main' : '', sub: dur(6) + (v.open ? ' · дом останется без ' + (k < 2 ? 'отопления' : 'горячей воды') : '') });
       });
       sect(b, 'Обслуживание');
-      if (!s.upg.ballv[i]) upgBtn(b, 'ballv', i); else para(b, 'Здесь шаровые краны — не закисают.', true);
+      if (!ball) upgBtn(b, 'ballv', i);
       const rv = w.v.some((v) => !v.open);
       const rt = G.Ev.openTask('wellRev');
-      btn(b, 'Ревизия: расходить все задвижки', () => A().wellRevise(i), B && B.house === i ? { disabled: true, sub: 'Не до ревизии — на вводе порыв' }
+      btn(b, 'Ревизия: расходить все задвижки', () => A().wellRevise(i), ball ? { disabled: true, sub: 'Шаровые краны не требуют ревизии' }
+        : B && B.house === i ? { disabled: true, sub: 'Не до ревизии — на вводе порыв' }
         : { cls: rv ? 'warn' : rt && !(w.revAt > rt.from) ? 'main' : '', sub: rv ? 'Сначала открыть все задвижки' : 'Закрыть-открыть каждую, смазать шпиндель · ' + dur(25) });
       btn(b, 'Подняться наверх', () => G.Main.exit(), { cls: 'ghost' });
     }, true);
@@ -931,13 +952,17 @@ G.UI = (() => {
   }
 
   // ================= оверлеи
-  function overlay(html) {
+  // onBack — что делает «Назад» на этом окне (по умолчанию просто закрыть)
+  let ovBack = null;
+  function overlay(html, onBack) {
     const o = $('overlay');
     o.innerHTML = html;
     o.classList.remove('hidden');
+    ovBack = onBack || null;
     return o;
   }
-  const closeOverlay = () => $('overlay').classList.add('hidden');
+  const closeOverlay = () => { ovBack = null; $('overlay').classList.add('hidden'); };
+  function overlayBack() { if (ovBack) ovBack(); else closeOverlay(); }
   function menu() {
     const running = !!G.S && !G.S.over;
     const o = overlay('<div class="ov"><div class="logo"><h1>СЛЕСАРЬ<br>ЦТП</h1><p>симулятор жизни слесаря</p></div><div class="menu" id="m-list"></div></div>');
@@ -984,10 +1009,11 @@ G.UI = (() => {
     if (!r || (perkLater && !force)) return;
     perkLater = false;
     closePanel(true);
-    const o = overlay('<div class="ov text"><h2>' + r + '-й разряд! Выбери умение</h2><p>Одно из двух — навсегда. Петрович ждёт ответа.</p><div id="pk-list" class="menu"></div></div>');
+    const later = () => { perkLater = true; closeOverlay(); reopen(); };
+    const o = overlay('<div class="ov text"><h2>' + r + '-й разряд! Выбери умение</h2><p>Одно из двух — навсегда. Петрович ждёт ответа.</p><div id="pk-list" class="menu"></div></div>', later);
     const list = o.querySelector('#pk-list');
     D.PERKS[r].forEach((pk, n) => btn(list, pk.name, () => { G.Ev.pickPerk(r, n); closeOverlay(); reopen(); }, { cls: 'main', sub: pk.desc }));
-    btn(list, 'Решу потом', () => { perkLater = true; closeOverlay(); reopen(); }, { cls: 'ghost', sub: 'Выбрать можно в Телефон → Я' });
+    btn(list, 'Решу потом', later, { cls: 'ghost', sub: 'Выбрать можно в Телефон → Я' });
   }
   function victory() {
     const s = G.S;
@@ -1030,6 +1056,6 @@ G.UI = (() => {
   }
 
   return Object.assign(api, { init, hud, tick, toast, onMessage, say, flash, ring, panel, reopen, closePanel, hidePanelForBusy, isModal,
-    panelOpen, overlayOpen, closeOverlay, panelPump, panelValve, panelHX, panelNet, panelHvs, panelEquip, openObj, ctpPanel, checklist, pressReport, panelFilter, panelDrain, panelFeed, panelGauge, panelCabinet,
+    panelOpen, overlayOpen, closeOverlay, overlayBack, panelPump, panelValve, panelHX, panelNet, panelHvs, panelEquip, openObj, ctpPanel, checklist, pressReport, panelFilter, panelDrain, panelFeed, panelGauge, panelCabinet,
     panelDesk, panelBox, panelHome, panelHouse, panelBasement, panelHatch, panelWell, panelShop, phone, obhodReport, menu, help, intro, victory, gameOver, hint, perkChoice });
 })();

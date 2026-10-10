@@ -226,6 +226,12 @@ G.Act = (() => {
     });
   }
   function corr(d) { const H = G.S.heat; H.corr = U.clamp(H.corr + d, -15, 15); G.UI.reopen(); }
+  function wctlToggle() {
+    const U2 = G.S.upg;
+    U2.wctlOff = !U2.wctlOff;
+    toast(U2.wctlOff ? 'Погодный контроллер выключен — график держишь сам' : 'Погодный контроллер включён — раз в 3 ч сам поправит график');
+    G.UI.reopen();
+  }
   function gvsSet(d) { const W = G.S.gvs; W.set = U.clamp(W.set + d, 55, 72); G.UI.reopen(); }
   function cleanFilter() {
     const s = G.S;
@@ -529,6 +535,7 @@ G.Act = (() => {
   // ревизия: закрыть и открыть каждую задвижку, чтобы не закисали
   function wellRevise(i) {
     const s = G.S, w = s.wells[i];
+    if (s.upg.ballv[i]) return toast('Здесь шаровые краны — ревизия не нужна');
     if (s.ev.burst && s.ev.burst.house === i) return toast('Не до ревизии — на вводе порыв', 'bad');
     if (w.v.some((v) => !v.open)) return toast('Сначала открой все задвижки — ревизия на работающей камере', 'bad');
     busy('Ревизия ' + TK(i) + ': расхаживаю задвижки, смазываю шпиндели', 25, { work: 0.08 }, () => {
@@ -613,5 +620,5 @@ G.Act = (() => {
   return { upgInstall, upgLeft, inv, has, tool, dur, procDur, skladLimit, ordersLeft, why, vacationSeason, vacationPay, valveToggle, valveUnstick, valveTighten, valveRepack,
     valveReplace, valveRegasket, pumpStart, pumpStop, pumpLube, pumpBearings, pumpSeal, drain, feed, corr, gvsSet,
     cleanFilter, flush, installReg, obhod, eat, machineCoffee, sleep, tv, shower, read, fishing, bleedAir, clampLeak,
-    meter, job, callBrigade, talk, wellDown, wellLock, wellToggle, wellUnstick, wellRevise, wellStickP, shopOpen, buy, order, circName, take, pressTest, vacation };
+    meter, job, wctlToggle, callBrigade, talk, wellDown, wellLock, wellToggle, wellUnstick, wellRevise, wellStickP, shopOpen, buy, order, circName, take, pressTest, vacation };
 })();

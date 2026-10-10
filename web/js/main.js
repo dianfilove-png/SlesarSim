@@ -231,7 +231,7 @@ G.Main = (() => {
   function back() {
     if (G.MG.isOpen()) { G.MG.close(); G.UI.toast('Работа брошена'); return true; }
     if (G.UI.overlayOpen()) {
-      if (started && G.S && !G.S.over) { G.UI.closeOverlay(); return true; }
+      if (started && G.S && !G.S.over) { G.UI.overlayBack(); return true; }
       return false;
     }
     if (G.UI.panelOpen()) { G.UI.closePanel(); return true; }

@@ -50,7 +50,7 @@ G.Ev = (() => {
     if (!pressSigned(s)) add({ type: 'pressTest', title: 'Опрессовка отопления', desc: 'Гидравлические испытания системы отопления на 7,5 бар. Кнопка — в шкафу или у подпитки (насосы стоят, задвижки открыты, система заполнена).' });
     [0, 1].forEach((i) => { if (!sinceSummer(s, s.pumps[i].serviced)) add({ type: 'pumpRev', ref: i, title: 'Ревизия насоса ' + s.pumps[i].id, desc: 'Заменить подшипники или уплотнение насоса ' + s.pumps[i].id + ' — перебрать перед зимой.' }); });
     if (!openTask('cleanFilter') && !sinceSummer(s, s.heat.cleanedAt)) add({ type: 'cleanFilter', title: 'Почистить грязевик', desc: 'Перед сезоном грязевик должен быть чистым.' });
-    if (!s.wells.every((w) => sinceSummer(s, w.revAt)) && !openTask('wellRev')) add({ type: 'wellRev', from, title: 'Ревизия тепловых камер', desc: 'Спуститься в камеры ТК-1…ТК-5 (люки перед домами) и расходить задвижки, чтобы при порыве не закисли. Закисшие — WD-40.' });
+    if (!s.wells.every((w, i) => s.upg.ballv[i] || sinceSummer(s, w.revAt)) && !openTask('wellRev')) add({ type: 'wellRev', from, title: 'Ревизия тепловых камер', desc: 'Спуститься в камеры ТК-1…ТК-5 (люки перед домами) и расходить задвижки, чтобы при порыве не закисли. Закисшие — WD-40.' });
     if (s.heat.foul >= 35 && !openTask('flush', undefined, 'heat')) add({ type: 'flush', circ: 'heat', title: 'Промыть ТО отопления', desc: 'Промыть пластинчатый теплообменник отопления реагентом.' });
     // задвижки, которые к 1 сентября износятся ниже нормы комиссии (40%)
     s.valves.filter((v) => v.pipe <= 2 && (v.cond < 60 || v.broken)).forEach((v) => {
@@ -74,24 +74,37 @@ G.Ev = (() => {
   // за что влетело: жалобы жильцов, плановые работы, аварии
   const PLANNED = ['obhod', 'lube', 'replaceValve', 'fixGland', 'switchPumps', 'cleanFilter', 'flush', 'bearings', 'pumpSeal', 'pumpRev', 'pressTest', 'wellRev', 'readiness', 'heatOff', 'heatStart'];
   const REPAIRS = ['lube', 'replaceValve', 'fixGland', 'cleanFilter', 'flush', 'bearings', 'pumpSeal', 'pumpRev', 'pressTest', 'wellRev'];
+  // контур готов к работе насосов: дренаж закрыт, давление есть, задвижки контура на ЦТП открыты
+  const circReady = (s, c) => !s[c].drain && s[c].ps >= 1 && [1, 2, 3, 4].every((n) => D.PIPES[n].circ !== c || G.Sim.pipeOpen(s, n));
   // ученик (умение «Наставник»): смазка и переход на резерв — сам, через полсуток после заявки
   function apprentice(s) {
     for (const k of openTasks()) {
       if ((k.type !== 'lube' && k.type !== 'switchPumps') || s.t - k.created < 12 * 60) continue;
       if (k.type === 'lube') { s.pumps[k.ref].lube = 100; msg('Ученик Димка', 'Смазал подшипники ' + s.pumps[k.ref].id + ', Литол свой. Всё путём!'); continue; }
       if (s.ev.power) continue;
+      // контур на ремонте (дренаж, нет давления, задвижки на ЦТП закрыты) — насосы не трогает
+      const circs = [...new Set(k.was.map((i) => s.pumps[i].circ))];
+      if (!circs.every((c) => circReady(s, c))) continue;
       const res = k.was.map((i) => s.pumps.find((p, j) => p.circ === s.pumps[i].circ && !p.broken && !k.was.includes(j)));
       if (res.some((r) => !r)) continue;
       k.was.forEach((i) => { s.pumps[i].on = false; });
       res.forEach((r) => { r.on = true; });
-      msg('Ученик Димка', 'Перешёл на резервные: ' + res.map((r) => r.id).join(', ') + ' крутятся, рабочие остановил.');
+      const one = res.length === 1;
+      msg('Ученик Димка', (one ? 'Перешёл на резерв: ' : 'Перешёл на резервные: ') + res.map((r) => r.id).join(', ') + (one ? ' крутится, рабочий остановил.' : ' крутятся, рабочие остановил.'));
     }
   }
   // погодный контроллер: коррекция графика на 1° к цели «во всех домах 20–23°»
+  // дома с перекрытым вводом не считает; насосы стоят или давления нет — график не трогает
   function weatherCtl(s) {
-    const tins = s.houses.map((x) => x.tin), H = s.heat;
-    if (Math.min(...tins) < 20 && H.corr < 15) H.corr++;
-    else if (Math.max(...tins) > 23 && H.corr > -15) H.corr--;
+    const H = s.heat, Sm = G.Sim;
+    if (!Sm.anyOn(s, 'heat') || H.ps < Sm.P_LOW) return;
+    const tins = s.houses.filter((x, i) => Sm.wellOpen(s, i, 'heat')).map((x) => x.tin);
+    if (!tins.length) return;
+    const lo = Math.min(...tins), hi = Math.max(...tins);
+    // перетоп — в первую очередь; при большом разбросе холодный дом поднимаем только до 19,5°, остальных не разгоняем
+    if (hi > 24 && H.corr > -15) H.corr--;
+    else if (lo < (hi - lo > 4 ? 19.5 : 20) && H.corr < 15) H.corr++;
+    else if (hi > 23 && H.corr > -15) H.corr--;
   }
   function failText(k) {
     const t = '«' + k.title + '»';
@@ -120,7 +133,12 @@ G.Ev = (() => {
     cleanFilter: (k, s) => s.heat.cleanedAt >= k.created,
     flush: (k, s) => s[k.circ].flushedAt >= k.created,
     // тёплышко пошло: 19° и растёт — уже засчитываем, не ждём 19,5°
-    heat: (k, s) => { const tin = s.houses[k.ref].tin, up = k.prevTin !== undefined && tin >= k.prevTin; k.prevTin = tin; return sustained(k, tin >= 19.5 || (tin >= 19 && up)); },
+    // или дом явно выводят: с жалобы +1° и тепло всё прибывает
+    heat: (k, s) => {
+      const tin = s.houses[k.ref].tin, up = k.prevTin !== undefined && tin >= k.prevTin;
+      k.prevTin = tin;
+      return sustained(k, tin >= 19.5 || (tin >= 19 && up) || (k.tin0 !== undefined && tin - k.tin0 >= 1 && up));
+    },
     overheat: (k, s) => sustained(k, s.houses[k.ref].tin <= 25),
     hot: (k, s) => sustained(k, s.houses[k.ref].ttap >= 53),
     air: (k, s) => s.houses[k.ref].air === 0,
@@ -136,7 +154,7 @@ G.Ev = (() => {
     readiness: (k, s) => readinessIssues(s).length === 0,
     heatStart: (k, s) => s.heat.q > 0.5 && s.heat.t1 > 38,
     wellOpen: (k, s) => G.Sim.wellOpen(s, k.ref, k.circ),
-    wellRev: (k, s) => s.wells.every((w) => w.revAt > (k.from === undefined ? k.created : k.from)),
+    wellRev: (k, s) => s.wells.every((w, i) => s.upg.ballv[i] || w.revAt > (k.from === undefined ? k.created : k.from)), // шаровым кранам ревизия не нужна
   };
 
   function msg(from, text, urgent) {
@@ -236,14 +254,15 @@ G.Ev = (() => {
   function fail(k, s) {
     k.failed = true;
     k.doneAt = s.t;
+    // не взялся за шабашку — не просрочка: ни в табель, ни в настроение
+    if (k.type === 'job') { msg(k.who || 'Жилец', 'Ну и не надо, другого мастера найду.'); return; }
     const pen = (k.excuse ? 1 : (FAIL[k.type] !== undefined ? FAIL[k.type] : 5)) * (hasPerk('auth') ? 0.5 : 1);
     if (pen) trust(-pen);
     mood(-4);
     s.stats.tasksFailed++;
     s.stats.failBy = s.stats.failBy || {};
     s.stats.failBy[k.type] = (s.stats.failBy[k.type] || 0) + 1;
-    if (k.type === 'job') msg(k.who || 'Жилец', 'Ну и не надо, другого мастера найду.');
-    else if (pen) msg(BOSS, failText(k));
+    if (pen) msg(BOSS, failText(k));
     if (k.type === 'burst' && s.ev.burst && s.ev.burst.called === null) {
       s.ev.burst.called = s.t;
       msg(ODS, 'Аварийную бригаду на порыв вызвали сами. Почему слесарь не сообщил?!');
@@ -294,20 +313,23 @@ G.Ev = (() => {
     // дом отсечён на время ремонта порыва — жильцов предупредили, спрос мягче (только по контуру порыва)
     const B = s.ev.burst;
     const ex = B && B.house === i && (B.pipe === 'heat' ? ['heat', 'overheat', 'air'] : ['hot']).includes(type) ? { excuse: true } : {};
-    addTask(Object.assign({ type, ref: i, title: c.title + ': ' + hd.name, desc: c.text, deadline: s.t + c.dl, who }, ex));
+    addTask(Object.assign({ type, ref: i, title: c.title + ': ' + hd.name, desc: c.text, deadline: s.t + c.dl, who }, type === 'heat' ? { tin0: hs.tin } : {}, ex));
     s.stats.complaints++;
   }
   // chill — сезон и жильцы уже не терпят: ОДС заранее предупреждает, что в доме прохладно (на грани 18–19,5°, не чаще раза в сутки и только после того, как было 20°, без заявки)
   function complaints(i, cold, hot, noHot, night, chill) {
     const s = G.S, hs = s.houses[i], L = hs.last;
+    // tin час назад и два часа назад: дом теплеет — на холод не звонят, ждут
+    if (s.t % 60 === 0) { hs.tinH0 = hs.tinH === undefined ? hs.tin : hs.tinH; hs.tinH = hs.tin; }
+    const warming = hs.tinH0 !== undefined && hs.tin - hs.tinH0 >= 0.1;
     if (hs.tin >= 20) L.coolUp = s.t; // снова тепло — следующее похолодание ОДС заметит заново
     if (chill && hs.tin < 19.5 && hs.tin >= 18 && (L.coolUp || 0) > (L.cool || -1) && s.t - (L.cool || -1e9) >= 1440 && !openTask('heat', i)) {
       L.cool = s.t;
-      msg(ODS, 'В доме №' + D.HOUSES[i].id + ' прохладно, ' + U.deg1(Math.floor(hs.tin * 10) / 10).replace('.', ',') + '. Пока не звонят, но скоро начнут — подними график или проверь ввод.');
+      msg(ODS, 'В доме №' + D.HOUSES[i].id + ' прохладно, ' + U.deg1(hs.tin) + '. Пока не звонят, но скоро начнут — подними график или проверь ввод.');
     }
     const f = night ? 0.15 : 1;
     const ready = (type) => !openTask(type, i) && s.t - (hs.last[type] || -1e9) > 360;
-    if (cold > 0.3 && ready('heat') && Math.random() < cold * 0.0015 * f) complain(i, 'heat');
+    if (cold > 0.3 && !warming && ready('heat') && Math.random() < cold * 0.0015 * f) complain(i, 'heat');
     else if (hot > 0.3 && ready('overheat') && Math.random() < hot * 0.0012 * f) complain(i, 'overheat');
     else if (noHot > 0.3 && ready('hot') && Math.random() < noHot * 0.0015 * f) complain(i, 'hot');
     else if (hs.air && ready('air') && Math.random() < 0.0015 * f) complain(i, 'air');
@@ -366,9 +388,12 @@ G.Ev = (() => {
     s.tasks = s.tasks.filter((k) => !wo.includes(k) && !(B && taskIs(k, 'burst')));
     for (const k of s.tasks) if (k.deadline && !k.plan) k.deadline += mins;
     s.ev.inspect = null;
+    // мороз (хоть часть) прошёл без героя — премию за него не дают
+    if (s.wx.snap) s.wx.snap.compl = true;
+    if (s.wx.frost && s.wx.frost.from <= s.t) s.wx.frost.compl = true;
     for (let dd = U.day(t0); dd <= U.day(s.t); dd++) {
       const at = dd * 1440 + 10 * 60, x = U.date(at);
-      if ((x.d === 5 || x.d === 20) && at > t0 && at <= s.t) payday(x.d);
+      if ((x.d === 5 || x.d === 20) && at > t0 && at <= s.t) payday(x.d, at);
     }
   }
 
@@ -378,32 +403,37 @@ G.Ev = (() => {
   const premOf = (tr) => (PREM.find((x) => tr >= x[0]) || [0, 0])[1];
   const FAIL_NAME = { switchPumps: 'переход на резерв', lube: 'смазка насосов', obhod: 'обход', heat: '«холодно»', hot: 'горячая вода', overheat: '«жарко»',
     air: 'завоздушивание', leak: 'течи в подвалах', meter: 'показания', fixGland: 'течи задвижек', bearings: 'подшипники', pumpSeal: 'уплотнения',
-    replaceValve: 'замена задвижек', burst: 'порыв', wellOpen: 'задвижки в камерах', restart: 'пуск после отключения', pumpFix: 'ремонт насоса' };
+    replaceValve: 'замена задвижек', burst: 'порыв', wellOpen: 'задвижки в камерах', restart: 'пуск после отключения', pumpFix: 'ремонт насоса',
+    job: 'шабашки', cleanFilter: 'чистка грязевика', flush: 'промывка теплообменников', heatOff: 'остановка отопления', heatStart: 'пуск отопления',
+    pressTest: 'опрессовка', pumpRev: 'ревизия насосов', readiness: 'замечания комиссии', wellRev: 'ревизия камер' };
   const MON_N = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
   // точка отсчёта табеля: счётчики на прошлую зарплату
   const tabelMark = (s) => ({ done: s.stats.tasksDone, failed: s.stats.tasksFailed, compl: s.stats.complaints, trust: s.p.trust, failBy: Object.assign({}, s.stats.failBy || {}) });
   // табель 5-го: что сделал за месяц, премия и почему
-  function tabel(s, prem) {
+  function tabel(s, prem, at) {
     const T = s.flags.tabel || tabelMark(s), st = s.stats, P = s.p;
     const done = st.tasksDone - T.done, failed = st.tasksFailed - T.failed, compl = st.complaints - T.compl;
     let worst = '', wn = 0;
     for (const k in st.failBy || {}) { const n = st.failBy[k] - (T.failBy[k] || 0); if (n > wn) { wn = n; worst = k; } }
-    const dt = Math.round(P.trust - T.trust), tr = Math.round(P.trust);
-    const next = PREM.slice().reverse().find((x) => tr < x[0]);
+    // доверие — целой частью вниз, как его считает премия: 89,6 — это ещё не 90
+    const tr = Math.floor(P.trust), dt = tr - Math.floor(T.trust);
+    const next = PREM.slice().reverse().find((x) => P.trust < x[0]);
     const why = prem ? 'Премия ' + Math.round(prem * 100) + '%' + (next ? ' — до ' + Math.round(premOf(next[0]) * 100) + '% нужно доверие от ' + next[0] + '.' : ' — выше не бывает, так держать!')
       : 'Премии нет: доверие ниже 55. ' + (failed ? 'Просрочки и жалобы её съели.' : 'Опоздания и пустой журнал тоже считаются.');
-    const prev = U.date(s.t - 6 * 1440).m;
+    const prev = U.date(at - 6 * 1440).m;
     msg(BOSS, 'Табель за ' + MON_N[prev] + ': заявок выполнено ' + done + ', просрочено ' + failed +
       (wn ? ' (больше всего — ' + (FAIL_NAME[worst] || worst) + ', ' + wn + ')' : '') + ', жалоб жильцов ' + compl +
       '. Доверие ' + tr + ' (' + (dt >= 0 ? '+' : '−') + Math.abs(dt) + ' за месяц). ' + why);
     s.flags.tabel = tabelMark(s);
   }
-  function payday(dd) {
+  // at — момент выплаты (в отпуске и на больничном он раньше s.t)
+  function payday(dd, at) {
     const s = G.S, P = s.p;
+    if (at === undefined) at = s.t;
     const sal = D.RANKS[rankIdx()].salary;
     let sum, text, prem = 0;
     if (dd === 20) { sum = Math.round(sal * 0.4); text = 'Аванс: ' + U.money(sum) + '.'; }
-    else if (U.day(s.t) < 10) return;
+    else if (U.day(at) < 10) return;
     else {
       prem = premOf(P.trust);
       const ps = Math.round(sal * prem);
@@ -418,7 +448,7 @@ G.Ev = (() => {
     P.money -= RENT;
     msg('Квартплата и коммуналка', 'Списано ' + U.money(RENT) + ': квартира, свет, вода, домофон и капремонт. На карте осталось ' + U.money(P.money) + '.');
     if (P.money < 0) { mood(-10); msg('Мысли', 'Карта в минусе… Звонили из банка, вежливо так. Пора меньше тратить или брать шабашки.'); }
-    tabel(s, prem);
+    tabel(s, prem, at);
   }
 
   function inspectionResult() {
@@ -543,14 +573,14 @@ G.Ev = (() => {
     });
     if (E.inspect && t >= E.inspect.at) inspectionResult();
     if (s.wx.snap && t >= s.wx.snap.until) {
-      // мороз пережили без единой жалобы «Холодно» — заранее подготовился
-      if (s.wx.snap.delta < 0 && !s.wx.snap.compl && season) {
+      // крещенский мороз пережили без единой жалобы «Холодно» — заранее подготовился
+      if (s.wx.snap.frost && !s.wx.snap.compl && season) {
         trust(3); earn(3000); mood(5);
         msg(BOSS, 'Пережили мороз без жалоб! Ни одного звонка «холодно» — вот это я понимаю, слесарь. Выписал премию 3 000 ₽.', true);
       }
       s.wx.snap = null;
     }
-    if (s.wx.frost && t >= s.wx.frost.from) { const F = s.wx.frost; s.wx.snap = { delta: F.delta, until: F.until }; s.wx.frost = null; }
+    if (s.wx.frost && t >= s.wx.frost.from) { const F = s.wx.frost; s.wx.snap = { delta: F.delta, until: F.until, frost: true, compl: !!F.compl }; s.wx.frost = null; }
 
     // ---- плановые
     if (m === 8 * 60 + 15 && wd && s.flags.late !== day && s.scene === 'home') {
@@ -595,7 +625,8 @@ G.Ev = (() => {
       if (d.m === 0 && d.d >= 12 && d.d < 22 && s.flags.frostYear !== d.y) {
         s.flags.frostYear = d.y;
         const from = d.d < 15 ? tOf(s, 0, 15, 0) : t, delta = -U.rint(15, 18);
-        s.wx.frost = { from, until: tOf(s, 0, 23, 0), delta };
+        // прогноз не застал (больничный перескочил 12–15 января) — часть мороза прошла без героя, премии за него нет
+        s.wx.frost = { from, until: tOf(s, 0, 23, 0), delta, compl: d.d >= 15 };
         msg('Гидрометцентр', 'Крещенские морозы: с 15 по 22 января ночью до ' + U.deg(G.Sim.seasonal(U.date(from).doy) - 3 + delta) + '. Подготовьте отопление заранее — поднимите график, проверьте насосы и подпитку!', true);
       }
       if (d.m === 5 && !E.netOff && s.flags.netOffYear !== d.y) {
@@ -608,7 +639,7 @@ G.Ev = (() => {
     if (m === 10 * 60 && (d.d === 5 || d.d === 20)) payday(d.d);
     if (m >= 10 * 60 && d.m === 8 && d.d <= 5 && d.y > 2026 && s.flags.commYear !== d.y) { s.flags.commYear = d.y; commission(s); }
     if (m % 60 === 0 && hasPerk('mentor')) apprentice(s);
-    if (m % 180 === 0 && season && s.upg.wctl) weatherCtl(s);
+    if (m % 180 === 0 && season && s.upg.wctl && !s.upg.wctlOff) weatherCtl(s);
     if (m === 0) {
       let avg = 0;
       s.houses.forEach((h) => { avg += h.sat; });

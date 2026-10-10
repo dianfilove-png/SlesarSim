@@ -142,9 +142,10 @@ G.Sim = (() => {
       G.Ev.blowout();
     }
     // SMS-датчик давления: раньше диспетчера, будит и снимает ускорение
+    // слив через дренаж — сам сливаешь: молчит, пока давление снова не наберётся
     if (S.upg.sms && H.ps < 3 && !H.smsSent && (season || anyOn(S, 'heat'))) {
       H.smsSent = true;
-      G.Ev.msg('SMS-датчик ЦТП-7', 'Давление в отоплении ' + H.ps.toFixed(1) + ' бар и падает!', true);
+      if (!H.drain) G.Ev.msg('SMS-датчик ЦТП-7', 'Давление в отоплении ' + H.ps.toFixed(1) + ' бар!', true);
     } else if (H.ps > 3.5) H.smsSent = false;
     if (H.ps < 2 && !H.lowAlarm && (season || anyOn(S, 'heat'))) {
       H.lowAlarm = true;
