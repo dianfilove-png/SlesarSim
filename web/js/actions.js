@@ -9,6 +9,8 @@ G.Act = (() => {
   const tool = (id) => !!G.S.p.tools[id];
   const speed = () => D.RANKS[Ev.rankIdx()].speed * (G.S.p.energy < 15 ? 1.3 : 1);
   const dur = (min) => Math.max(1, Math.round(min * speed()));
+  // работа по техкарте: «Быстрые руки» — на 20% быстрее
+  const procDur = (min) => dur(min * (Ev.hasPerk('hands') ? 0.8 : 1));
   const toast = (t, c) => G.UI.toast(t, c);
   const circName = (c) => (c === 'heat' ? 'отопления' : 'ГВС');
   const after = () => { G.UI.reopen(); };
@@ -47,6 +49,11 @@ G.Act = (() => {
     regasket: (i) => isoReasons(G.S.valves[i]).concat(needItems([['gasket', 2]])),
     replace: (i) => isoReasons(G.S.valves[i]).concat(needItems([['valve', 1], ['gasket', 2]])),
     filter: () => dryReasons('heat').concat(needItems([['gasket', 1]])),
+    // модернизация: что мешает поставить
+    vfd: (i) => pumpOff(G.S.pumps[i]),
+    magnet: () => dryReasons('heat'),
+    ballv: (i) => (G.S.ev.burst && G.S.ev.burst.house === i ? ['на вводе порыв — сначала ремонт'] : []),
+    wctl: () => [], modem: () => [], sms: () => [],
     flush: (c) => dryReasons(c).concat(needItems([['reagent', 1]])),
     press: () => pressReasons(),
   };
@@ -66,7 +73,7 @@ G.Act = (() => {
     const closing = v.open;
     busy((closing ? 'Закрываю ' : 'Открываю ') + v.id + ' — крутить штурвал…', 5, { work: 0.05 }, () => {
       const idle = s.t - v.lastOp;
-      const p = 0.02 + (v.cond < 50 ? (50 - v.cond) / 100 : 0) + (idle > 60 * 1440 ? 0.15 : 0);
+      const p = (idle > 7 * 1440 ? 0.02 : 0.005) + (v.cond < 50 ? (50 - v.cond) / 100 : 0) + (idle > 60 * 1440 ? 0.15 : 0);
       if (Math.random() < p) {
         v.stuck = true;
         toast('Задвижка ' + v.id + ' закисла — штурвал ни в какую!', 'bad');
@@ -245,7 +252,7 @@ G.Act = (() => {
     });
   }
   function installReg() {
-    if (!has('regulator')) return toast('Нужен регулятор подпитки (склад, с 4-го разряда)', 'bad');
+    if (!has('regulator')) return toast('Нужен регулятор подпитки (склад, умение «Регулятор»)', 'bad');
     G.MG.proc('regulator', () => {
       take('regulator');
       G.S.heat.auto = true; G.S.heat.feed = false;
@@ -337,7 +344,7 @@ G.Act = (() => {
       });
       s.pumps.forEach((p, i) => {
         if (p.lube < 30) f.push({ k: 'lube', i });
-        if (p.bear >= 65 && !p.broken) f.push({ k: 'bear', i });
+        if (p.bear >= (Ev.hasPerk('ear') ? 45 : 65) && !p.broken) f.push({ k: 'bear', i });
         if (p.seal >= 75) f.push({ k: 'seal', i });
       });
       if (s.heat.clog >= 60) f.push({ k: 'clog' });
@@ -402,8 +409,8 @@ G.Act = (() => {
   }
   function read() {
     const P = G.S.p;
-    if ((P.readToday || 0) >= 2) return toast('Голова уже не варит. Завтра почитаешь.', 'bad');
-    busy('Читаю справочник по теплотехнике', 60, { work: 0.03 }, () => { P.readToday = (P.readToday || 0) + 1; Ev.xp(14); Ev.mood(-2); toast('+14 опыта', 'good'); });
+    if ((P.readToday || 0) >= 1) return toast('Голова уже не варит. Завтра почитаешь.', 'bad');
+    busy('Читаю справочник по теплотехнике', 60, { work: 0.03 }, () => { P.readToday = (P.readToday || 0) + 1; Ev.xp(8); Ev.mood(-2); toast('+8 опыта', 'good'); });
   }
   function fishing() {
     if (U.isWorkday(G.S.t)) return toast('Рыбалка — только в выходные', 'bad');
@@ -456,15 +463,16 @@ G.Act = (() => {
   // ---------- тепловые камеры перед домами
   const TK = D.TK;
   const WPIPE = ['Т1', 'Т2', 'Т3', 'Т4'];
-  // шанс закиснуть: задвижки в камерах годами не трогают
-  const wellStickP = (v) => 0.04 + U.clamp((G.S.t - v.lastOp) / 1440 - 30, 0, 300) / 1000;
+  // шанс закиснуть: задвижки в камерах годами не трогают (i — камера)
+  const wellStickP = (v, i) => (G.S.upg.ballv[i] ? 0 : 0.04 + U.clamp((G.S.t - v.lastOp) / 1440 - 30, 0, 300) / 1000); // шаровые краны не закисают
   function wellDown(i) {
     const s = G.S;
     busy('Поддеваю люк крюком, спускаюсь в камеру ' + TK(i), 4, { work: 0.04 }, () => {
       const B = s.ev.burst;
       s.well = i;
       G.Main.enter('well');
-      if (B && B.house === i && !Sim.burstIsolated(s)) {
+      if (B && B.house === i && !Sim.burstIsolated(s) && tool('suit')) toast('Внизу пар и кипяток — в термокостюме не страшно. Закрывай ' + (B.pipe === 'heat' ? 'Т1 и Т2' : 'Т3 и Т4') + '.', 'bad');
+      else if (B && B.house === i && !Sim.burstIsolated(s)) {
         s.p.health = Math.max(1, s.p.health - 8); Ev.mood(-4);
         toast('Внизу пар и кипяток по щиколотку — ошпарился! Закрывай ' + (B.pipe === 'heat' ? 'Т1 и Т2' : 'Т3 и Т4') + ' и наверх.', 'bad');
       }
@@ -497,7 +505,7 @@ G.Act = (() => {
       // пока крутил, задвижку могла перекрыть аварийка или у дома прорвало
       if (v.open !== closing || v.broken || v.stuck) return toast(WPIPE[k] + ' уже ' + (v.open ? 'открыта' : 'закрыта'));
       if (!closing && wellLock(i, k)) return toast(wellLock(i, k), 'bad');
-      if (Math.random() < wellStickP(v)) {
+      if (Math.random() < wellStickP(v, i)) {
         v.stuck = true;
         toast('Задвижка ' + WPIPE[k] + ' закисла — штурвал ни в какую! Нужна WD-40.', 'bad');
         return;
@@ -528,7 +536,7 @@ G.Act = (() => {
       w.v.forEach((v, k) => {
         if (v.broken) { bad.push(WPIPE[k] + ' — сорван шпиндель'); return; }
         if (v.stuck) { bad.push(WPIPE[k] + ' — закисла'); return; }
-        if (Math.random() < wellStickP(v) * 0.4) { v.stuck = true; bad.push(WPIPE[k] + ' — закисла'); return; }
+        if (Math.random() < wellStickP(v, i) * 0.4) { v.stuck = true; bad.push(WPIPE[k] + ' — закисла'); return; }
         v.lastOp = s.t;
       });
       if (!bad.length) {
@@ -540,13 +548,41 @@ G.Act = (() => {
     });
   }
 
+  // ---------- модернизация ЦТП: купил в магазине — ставишь сам; ref — насос или камера
+  const UPG = {
+    vfd: { min: 120, label: (i) => 'Монтирую частотник на насос ' + G.S.pumps[i].id + ', тяну кабель в шкаф', set: (U2, i) => { U2.vfd[i] = true; }, ok: (i) => 'Частотник на ' + G.S.pumps[i].id + ' стоит — насос пускается плавно, гудит тише.' },
+    wctl: { min: 90, label: () => 'Ставлю погодный контроллер в шкаф, вывожу датчик на фасад', set: (U2) => { U2.wctl = true; }, ok: () => 'Погодный контроллер работает — теперь он сам поправляет график.' },
+    modem: { min: 150, label: () => 'Обхожу подвалы, ставлю модемы на теплосчётчики', set: (U2) => { U2.modem = true; }, ok: () => 'Модемы на всех пяти узлах учёта — показания уйдут сами.' },
+    magnet: { min: 120, label: () => 'Врезаю магнитный фильтр перед грязевиком', set: (U2) => { U2.magnet = true; }, ok: () => 'Магнитный фильтр стоит. Не забудь закрыть дренаж и подпитать!' },
+    ballv: { min: 120, label: (i) => 'Меняю задвижки ' + TK(i) + ' на шаровые краны', set: (U2, i) => { U2.ballv[i] = true; const w = G.S.wells[i]; w.fixAt = null; w.v.forEach((v) => Object.assign(v, { open: true, stuck: false, broken: false, lastOp: G.S.t })); },
+      ok: (i) => 'В ' + TK(i) + ' шаровые краны — четверть оборота, и никакой кислятины. Все открыты.' },
+    sms: { min: 30, label: () => 'Подключаю SMS-датчик к манометру отопления', set: (U2) => { U2.sms = true; }, ok: () => 'SMS-датчик подключён: упадёт давление — телефон зазвонит.' },
+  };
+  function upgInstall(id, ref) {
+    const u = UPG[id];
+    if (!has(id)) return toast('Сначала купи: ' + D.ITEMS[id].name + ' (магазин)', 'bad');
+    if (!ready(id, ref)) return;
+    busy(u.label(ref), u.min, { work: 0.06 }, () => {
+      take(id);
+      u.set(G.S.upg, ref);
+      G.S.stats.repairs++;
+      Ev.xp(15); Ev.mood(6);
+      toast(u.ok(ref), 'good');
+    });
+  }
+  // сколько ещё можно купить: всего n минус поставленные и лежащие в ящике
+  function upgLeft(id) {
+    const x = G.S.upg[id], done = Array.isArray(x) ? x.filter(Boolean).length : x ? 1 : 0;
+    return D.ITEMS[id].n - done - inv(id);
+  }
+
   // ---------- магазин и склад
   function shopOpen() { const h = U.hour(G.S.t); return h >= 8 && h < 22; }
   function buy(id) {
     const P = G.S.p, it = D.ITEMS[id];
     if (!shopOpen()) return toast('Магазин закрыт (8:00–22:00)', 'bad');
     if (P.money < it.price) return toast('Не хватает денег', 'bad');
-    if ((it.kind === 'tool' && P.tools[id]) || (it.kind === 'home' && P.home[id])) return;
+    if ((it.kind === 'tool' && P.tools[id]) || (it.kind === 'home' && P.home[id]) || (it.kind === 'upg' && upgLeft(id) <= 0)) return;
     P.money -= it.price;
     if (it.kind === 'tool') P.tools[id] = true;
     else if (it.kind === 'home') { P.home[id] = true; Ev.mood(it.price >= 100000 ? 40 : 10); if (id === 'car') G.Ev.msg('Мысли', 'Своя «Нива»! Теперь по выходным — на рыбалку.'); }
@@ -554,23 +590,27 @@ G.Act = (() => {
     G.UI.toast('Куплено: ' + it.name, 'good');
     G.UI.reopen();
   }
+  // склад: лимит на месяц и заявок в день («Хозяйственник» — +50% и две)
+  const skladLimit = () => D.SKLAD_LIMIT * (Ev.hasPerk('boss') ? 1.5 : 1);
+  const ordersLeft = () => { const s = G.S; return (Ev.hasPerk('boss') ? 2 : 1) - (s.sklad.lastDay === U.day(s.t) ? s.sklad.today : 0); };
   function orderArrive() { return U.nextAt(G.S.t + 60, 9 * 60); }
   function order(items) {
     const s = G.S;
     const day = U.day(s.t);
-    if (s.sklad.lastDay === day) return toast('Склад принимает одну заявку в день', 'bad');
+    if (ordersLeft() <= 0) return toast(Ev.hasPerk('boss') ? 'Склад принимает две заявки в день — обе уже ушли' : 'Склад принимает одну заявку в день', 'bad');
     let sum = 0, n = 0;
     for (const id in items) { sum += D.ITEMS[id].price * items[id]; n += items[id]; }
     if (!n) return toast('Пустая заявка');
-    if (s.sklad.spent + sum > D.SKLAD_LIMIT) return toast('Превышен лимит склада на месяц', 'bad');
+    if (s.sklad.spent + sum > skladLimit()) return toast('Превышен лимит склада на месяц', 'bad');
     s.sklad.spent += sum;
+    s.sklad.today = s.sklad.lastDay === day ? s.sklad.today + 1 : 1;
     s.sklad.lastDay = day;
     s.orders.push({ items, arrive: orderArrive() });
     G.Ev.msg('Склад УК', 'Заявка принята, привезём на ЦТП-7 к 9:00 (' + U.dateStr(orderArrive()) + ').');
     G.UI.reopen();
   }
 
-  return { inv, has, tool, dur, why, vacationSeason, vacationPay, valveToggle, valveUnstick, valveTighten, valveRepack,
+  return { upgInstall, upgLeft, inv, has, tool, dur, procDur, skladLimit, ordersLeft, why, vacationSeason, vacationPay, valveToggle, valveUnstick, valveTighten, valveRepack,
     valveReplace, valveRegasket, pumpStart, pumpStop, pumpLube, pumpBearings, pumpSeal, drain, feed, corr, gvsSet,
     cleanFilter, flush, installReg, obhod, eat, machineCoffee, sleep, tv, shower, read, fishing, bleedAir, clampLeak,
     meter, job, callBrigade, talk, wellDown, wellLock, wellToggle, wellUnstick, wellRevise, wellStickP, shopOpen, buy, order, circName, take, pressTest, vacation };

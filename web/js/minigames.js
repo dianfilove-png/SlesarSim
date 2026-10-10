@@ -172,7 +172,7 @@ G.MG = (() => {
     }
     function choose(o) {
       if (o === P.steps[idx]) {
-        G.Main.advance(G.Act.dur(P.stepMin));
+        G.Main.advance(G.Act.procDur(P.stepMin));
         G.Snd.play('clank');
         idx++;
         if (idx >= P.steps.length) {

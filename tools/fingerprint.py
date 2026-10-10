@@ -6,7 +6,8 @@ python3 tools/fingerprint.py [root] [--days N] [--dump out.json]
 root — корень копии игры (по умолчанию этот репозиторий). Math.random заменён на mulberry32 (seed 12345)
 до G.Main.startNew(), requestAnimationFrame выключен — время идёт только через G.Main.advance.
 Бот панелей не открывает: держит доверие и потребности, по насосу на контур, подпитку 3,5–4,3 бар,
-вызывает аварийку, закрывает заявки (часть — через G.Act, без панелей и мини-игр); лето без отпуска.
+вызывает аварийку, закрывает заявки (часть — через G.Act, без панелей и мини-игр); лето без отпуска;
+умения — первое из двух, модернизацию не покупает.
 Одинаковые хэши у двух копий — поведение симуляции не изменилось. --dump пишет разделы целиком
 (и хэш состояния на конец каждого дня — найти первый расходящийся день).
 """
@@ -50,6 +51,8 @@ window.bot = () => {
   const P = s.p, H = s.heat, E = s.ev, B = E.burst, h = U.hour(s.t), day = U.day(s.t), wd = U.isWorkday(s.t), season = Sim.heatSeason(s.t);
   const open = s.tasks.filter((k) => !k.done && !k.failed);
   const first = (type, ok) => open.find((k) => k.type === type && (!ok || ok(k)));
+  // умение на новом разряде — всегда первое из двух
+  if (Ev.perkPending()) Ev.pickPerk(Ev.perkPending(), 0);
   // не увольняют, сыт и бодр; в рабочее время — на ЦТП
   P.trust = 60; P.energy = 90; P.hunger = 90; P.health = 95;
   s.scene = wd && h >= 8 && h < 17 ? 'ctp' : 'street';

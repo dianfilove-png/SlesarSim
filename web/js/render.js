@@ -226,7 +226,7 @@ G.R = (() => {
     ctx.font = 'bold 13px ' + FONT;
     const bw = ctx.measureText(lbl).width + 22;
     rr(bx - bw / 2, by - 13, bw, 24, 7); ctx.fillStyle = 'rgba(14,20,30,.82)'; ctx.fill();
-    circle(bx - bw / 2 + 10, by - 1, 4.5, hs.sat > 60 ? '#5cd65c' : hs.sat > 35 ? '#f0c040' : '#f05040');
+    circle(bx - bw / 2 + 10, by - 1, 4.5, ['#5cd65c', '#f0c040', '#f05040'][G.Sim.houseLevel(s, hs)]);
     text(lbl, bx + 5, by - 1, 13, (season && hs.tin < 18.5) || hs.ttap < 50 ? '#ff9a8a' : '#e8f0ff', 'center', true, false);
     if (G.Ev.houseTasks(hd.id - 1).length) {
       const yy = by - 30 + Math.sin(anim * 5) * 3;

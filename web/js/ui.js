@@ -31,7 +31,14 @@ G.UI = (() => {
     parent.appendChild(m);
   }
   const reqSub = (r, okText) => (r.length ? 'Нужно: ' + r.join('; ') : okText);
+  // кнопка установки купленной модернизации (если лежит в ящике)
+  function upgBtn(b, id, ref) {
+    if (!A().inv(id)) return;
+    const r = A().why(id, ref);
+    btn(b, 'Установить: ' + D.ITEMS[id].name, () => A().upgInstall(id, ref), { cls: r.length ? 'warn' : 'main', sub: reqSub(r, 'Из ящика · около ' + dur({ vfd: 120, wctl: 90, modem: 150, magnet: 120, ballv: 120, sms: 30 }[id])) });
+  }
   const dur = (m) => U.dur(A().dur(m));
+  const pdur = (key) => U.dur(A().procDur(D.procMin(key)));
 
   // ---------- панель
   // live: панель оборудования — игра идёт, значения обновляются; иначе пауза
@@ -284,7 +291,10 @@ G.UI = (() => {
 
   function tick(dt) {
     hudAcc += dt;
-    if (hudAcc > 0.2) { hudAcc = 0; hud(); zoneHighlight(); if (G.Tut) G.Tut.tick(); }
+    if (hudAcc > 0.2) {
+      hudAcc = 0; hud(); zoneHighlight(); if (G.Tut) G.Tut.tick();
+      if (G.S && !G.S.over && G.Main.started && !overlayOpen() && !G.busy && !G.MG.isOpen()) perkChoice();
+    }
     liveAcc += dt;
     if (liveAcc > 0.8) {
       liveAcc = 0;
@@ -308,6 +318,7 @@ G.UI = (() => {
       if (s.p.tools.pyrometer && p.on) { const tb = 35 + p.bear * 0.35 + (p.lube < 25 ? 18 : 0); kv(b, 'Пирометр: подшипник', Math.round(tb) + '°C', tb > 70 ? 'bad' : tb > 55 ? 'warn' : 'ok'); }
       kv(b, 'Смазка подшипников', p.lube > 60 ? 'свежая' : p.lube > 25 ? 'нормально' : 'сухо — смазать!', p.lube > 60 ? 'ok' : p.lube > 25 ? '' : 'bad');
       kv(b, 'Уплотнение вала', p.seal >= 100 ? 'течёт струёй!' : p.seal >= 75 ? 'подкапывает' : 'сухо', p.seal >= 100 ? 'bad' : p.seal >= 75 ? 'warn' : 'ok');
+      if (s.upg.vfd[i]) kv(b, 'Частотный преобразователь', 'стоит — износ ×0,6', 'ok');
       if (!p.on && !p.broken) {
         sect(b, 'Перед пуском ' + (p.circ === 'heat' ? 'отопления' : 'ГВС'));
         drawChecklist(b, p.circ, true);
@@ -317,9 +328,10 @@ G.UI = (() => {
       else btn(b, 'Запустить насос', () => A().pumpStart(i), startOpts(p));
       btn(b, 'Смазать подшипники', () => A().pumpLube(i), { cls: inv('grease') ? '' : 'warn', sub: 'Литол-24 (есть ' + inv('grease') + ' порц.) · ' + dur(10) + ' · можно на ходу' });
       const rb = A().why('bearings', i);
-      btn(b, 'Заменить подшипники', () => A().pumpBearings(i), { cls: rb.length ? 'warn' : '', sub: reqSub(rb, 'Подшипник ×2 + смазка · около ' + dur(D.procMin('bearings'))) });
+      btn(b, 'Заменить подшипники', () => A().pumpBearings(i), { cls: rb.length ? 'warn' : '', sub: reqSub(rb, 'Подшипник ×2 + смазка · около ' + pdur('bearings')) });
       const rs = A().why('seal', i);
-      btn(b, 'Заменить торцевое уплотнение', () => A().pumpSeal(i), { cls: rs.length ? 'warn' : '', sub: reqSub(rs, 'Торцевое уплотнение · около ' + dur(D.procMin('seal'))) });
+      btn(b, 'Заменить торцевое уплотнение', () => A().pumpSeal(i), { cls: rs.length ? 'warn' : '', sub: reqSub(rs, 'Торцевое уплотнение · около ' + pdur('seal')) });
+      if (!s.upg.vfd[i]) upgBtn(b, 'vfd', i);
       para(b, 'Совет: перед ремонтом запусти соседний насос, тогда контур не встанет.', true);
     }, true);
   }
@@ -339,7 +351,7 @@ G.UI = (() => {
       if (v.gland) btn(b, 'Подтянуть сальник', () => A().valveTighten(i), { cls: v.packing ? '' : 'warn', sub: v.packing ? dur(10) + ' · гаечным ключом' : 'Набивка выработана' });
       const c = pi.circ;
       const rp = A().why('repack', i);
-      btn(b, 'Перенабить сальник', () => A().valveRepack(i), { cls: rp.length ? 'warn' : '', sub: reqSub(rp, 'Набивка АП-31 · около ' + dur(D.procMin('repack'))) });
+      btn(b, 'Перенабить сальник', () => A().valveRepack(i), { cls: rp.length ? 'warn' : '', sub: reqSub(rp, 'Набивка АП-31 · около ' + pdur('repack')) });
       if (v.flange) {
         const rg = A().why('regasket', i);
         btn(b, 'Заменить прокладки фланцев', () => A().valveRegasket(i), { cls: rg.length ? 'warn' : '', sub: reqSub(rg, 'Прокладка ×2 · мини-игра «болты»') });
@@ -370,7 +382,7 @@ G.UI = (() => {
       kv(b, 'Потолок нагрева', U.deg(G.Sim.maxT(s, c)) + 'C');
       sect(b, 'Действия');
       const r = A().why('flush', c);
-      btn(b, 'Промыть реагентом', () => A().flush(c), { cls: r.length ? 'warn' : 'main', sub: reqSub(r, 'Реагент · около ' + dur(D.procMin('flush'))) });
+      btn(b, 'Промыть реагентом', () => A().flush(c), { cls: r.length ? 'warn' : 'main', sub: reqSub(r, 'Реагент · около ' + pdur('flush')) });
       if (c === 'heat') {
         const row = h('div', 'row2');
         btn(row, '−2° к графику', () => A().corr(-2));
@@ -394,7 +406,8 @@ G.UI = (() => {
       kv(b, 'Засор', c < 30 ? 'чистый' : c < 60 ? 'есть шлам' : 'забит — расход падает!', c < 30 ? 'ok' : c < 60 ? 'warn' : 'bad');
       sect(b, 'Действия');
       const r = A().why('filter');
-      btn(b, 'Почистить грязевик', () => A().cleanFilter(), { cls: r.length ? 'warn' : 'main', sub: reqSub(r, 'Прокладка ×1 · около ' + dur(D.procMin('filter'))) });
+      btn(b, 'Почистить грязевик', () => A().cleanFilter(), { cls: r.length ? 'warn' : 'main', sub: reqSub(r, 'Прокладка ×1 · около ' + pdur('filter')) });
+      if (s.upg.magnet) kv(b, 'Магнитный фильтр', 'стоит — забивается вдвое медленнее', 'ok'); else upgBtn(b, 'magnet');
     }, true);
   }
   function panelDrain(c) {
@@ -423,7 +436,7 @@ G.UI = (() => {
       if (H.auto) kv(b, 'Регулятор РД-3М', H.autoOn ? 'подпитывает' : 'держит 3.8–4.2 бар', 'ok');
       btn(b, H.feed ? 'Закрыть подпитку' : 'Открыть подпитку', () => A().feed(), { cls: 'main', sub: dur(1) + ' · около +0.06 бар/мин' });
       pressBtn(b);
-      if (!H.auto) btn(b, 'Установить регулятор подпитки', () => A().installReg(), { cls: inv('regulator') ? '' : 'warn', sub: inv('regulator') ? 'около ' + dur(D.procMin('regulator')) : 'Нужен регулятор РД-3М (склад, с 4-го разряда)' });
+      if (!H.auto) btn(b, 'Установить регулятор подпитки', () => A().installReg(), { cls: inv('regulator') ? '' : 'warn', sub: inv('regulator') ? 'около ' + pdur('regulator') : 'Нужен регулятор РД-3М (склад, умение «Регулятор»)' });
       if (H.feed) para(b, s.speed ? 'Пока панель открыта, время идёт — манометр растёт на глазах.' : 'Игра на паузе (❚❚) — нажми ×1 или ×5, иначе давление не растёт.', true);
     }, true);
   }
@@ -499,6 +512,17 @@ G.UI = (() => {
       btn(r1, '−2°', () => A().corr(-2)); btn(r1, '+2°', () => A().corr(2));
       b.appendChild(r1);
       para(b, 'Жалобы на холод — подними коррекцию. На жару — опусти. Самый дальний и старый дом мёрзнет первым.', true);
+      const U2 = s.upg, have = ['wctl', 'modem', 'sms'].filter((id) => U2[id] || inv(id));
+      if (have.length || U2.vfd.some(Boolean) || U2.magnet || U2.ballv.some(Boolean)) {
+        sect(b, 'Модернизация ЦТП');
+        if (U2.wctl) kv(b, 'Погодный контроллер', 'держит дома 20–23°', 'ok');
+        if (U2.modem) kv(b, 'Модемы узлов учёта', 'показания уходят сами', 'ok');
+        if (U2.sms) kv(b, 'SMS-датчик давления', 'ниже 3 бар — SMS', 'ok');
+        if (U2.vfd.some(Boolean)) kv(b, 'Частотники', s.pumps.filter((p, i) => U2.vfd[i]).map((p) => p.id).join(', '), 'ok');
+        if (U2.magnet) kv(b, 'Магнитный фильтр', 'на Т2', 'ok');
+        if (U2.ballv.some(Boolean)) kv(b, 'Шаровые краны', U2.ballv.map((x, i) => (x ? TK(i) : '')).filter(Boolean).join(', '), 'ok');
+        have.filter((id) => !U2[id]).forEach((id) => upgBtn(b, id));
+      }
       sect(b, 'Регулятор ГВС');
       kv(b, 'Уставка Т3', s.gvs.set + '°C');
       const r2 = h('div', 'row2');
@@ -510,7 +534,7 @@ G.UI = (() => {
   function pressBtn(b) {
     if (G.Sim.heatSeason(G.S.t)) return;
     const r = A().why('press'), signed = G.Ev.pressSigned(G.S);
-    btn(b, 'Опрессовка отопления (гидроиспытания)', () => A().pressTest(), { cls: r.length ? 'warn' : signed ? 'ghost' : 'main', sub: reqSub(r, (signed ? 'акт уже подписан · ' : '') + '7,5 бар, 10 минут · около ' + dur(D.procMin('press'))) });
+    btn(b, 'Опрессовка отопления (гидроиспытания)', () => A().pressTest(), { cls: r.length ? 'warn' : signed ? 'ghost' : 'main', sub: reqSub(r, (signed ? 'акт уже подписан · ' : '') + '7,5 бар, 10 минут · около ' + pdur('press')) });
   }
   function pressReport(ok, drop, defects) {
     panel('Гидравлические испытания', (b) => {
@@ -604,7 +628,7 @@ G.UI = (() => {
     panel('Ящик ЗИП и карманы', (b) => {
       sect(b, 'Запчасти и расходники');
       const P = s.p;
-      const parts = Object.keys(P.inv).filter((id) => D.ITEMS[id].kind === 'part');
+      const parts = Object.keys(P.inv).filter((id) => D.ITEMS[id].kind === 'part' || D.ITEMS[id].kind === 'upg');
       if (!parts.length) para(b, 'Пусто. Закажи на складе через телефон или купи в магазине.', true);
       parts.forEach((id) => kv(b, D.ITEMS[id].name, P.inv[id] + (D.ITEMS[id].uses ? ' порц.' : ' шт.')));
       sect(b, 'Еда');
@@ -643,7 +667,7 @@ G.UI = (() => {
     if (what === 'tv') return panel('Телевизор', (b) => { btn(b, 'Смотреть телевизор (1 ч)', () => A().tv(), { cls: 'main', sub: 'Настроение +' + (P.home.bigtv ? 20 : 10) }); });
     if (what === 'bath') return panel('Ванная', (b) => { kv(b, 'Горячая вода в кране', U.deg(s.houses[0].ttap) + 'C', s.houses[0].ttap >= 50 ? 'ok' : 'bad'); btn(b, 'Принять душ', () => A().shower(), { cls: 'main', sub: dur(15) }); para(b, 'Ты живёшь в доме №1 — твой же ЦТП греет тебе воду.', true); });
     if (what === 'shelf') return panel('Книжная полка', (b) => {
-      if (P.tools.book) btn(b, 'Читать справочник (1 ч)', () => A().read(), { cls: 'main', sub: '+14 опыта · не больше 2 раз в день' });
+      if (P.tools.book) btn(b, 'Читать справочник (1 ч)', () => A().read(), { cls: 'main', sub: '+8 опыта · раз в день' });
       else para(b, 'Полка пустая. «Справочник слесаря-теплотехника» продаётся в магазине — чтение даёт опыт для разряда.');
     });
     if (what === 'radiator' || what === 'window') return panel(what === 'radiator' ? 'Батарея' : 'Окно', (b) => {
@@ -660,6 +684,12 @@ G.UI = (() => {
     para(b, hd.floors + ' этажей, ' + hd.apts + ' квартир.', true);
     if (G.Sim.heatSeason(s.t)) kv(b, 'В квартирах', U.deg1(hs.tin) + 'C', hs.tin < 18.5 ? 'bad' : hs.tin > 25.5 ? 'warn' : 'ok');
     kv(b, 'Горячая вода', U.deg(hs.ttap) + 'C', hs.ttap < 50 ? 'bad' : hs.ttap < 58 ? 'warn' : 'ok');
+    // подсказка причины: что видно с ЦТП и из камеры
+    const Sm = G.Sim, wv = s.wells[i].v, season = Sm.heatSeason(s.t);
+    if (season && !Sm.wellOpen(s, i, 'heat')) kv(b, 'Отопление', 'перекрыто в ' + TK(i), 'bad');
+    else if (season && s.heat.ps < Sm.P_LOW) kv(b, 'Давление в отоплении', 'низкое (' + s.heat.ps.toFixed(1) + ' бар)', 'bad');
+    if (!wv[2].open) kv(b, 'Подача ГВС', 'перекрыта в ' + TK(i), 'bad');
+    else if (s.gvs.ps > 1 && (s.gvs.q <= 0.3 || !wv[3].open)) kv(b, 'Циркуляция ГВС', 'нет' + (wv[3].open ? '' : ' — Т4 перекрыта в ' + TK(i)), 'warn');
     kv(b, 'Настроение жильцов', Math.round(hs.sat) + '%', hs.sat > 60 ? 'ok' : hs.sat > 35 ? 'warn' : 'bad');
     meter(b, hs.sat, hs.sat > 60 ? '#4caf50' : hs.sat > 35 ? '#f0b030' : '#e53935');
     const tasks = G.Ev.houseTasks(i);
@@ -756,6 +786,7 @@ G.UI = (() => {
           lock ? { disabled: true, sub: lock } : { cls: urgent ? 'main' : '', sub: dur(6) + (v.open ? ' · дом останется без ' + (k < 2 ? 'отопления' : 'горячей воды') : '') });
       });
       sect(b, 'Обслуживание');
+      if (!s.upg.ballv[i]) upgBtn(b, 'ballv', i); else para(b, 'Здесь шаровые краны — не закисают.', true);
       const rv = w.v.some((v) => !v.open);
       const rt = G.Ev.openTask('wellRev');
       btn(b, 'Ревизия: расходить все задвижки', () => A().wellRevise(i), B && B.house === i ? { disabled: true, sub: 'Не до ревизии — на вводе порыв' }
@@ -772,12 +803,12 @@ G.UI = (() => {
     panel('Магазин', (b) => {
       if (!A().shopOpen()) { para(b, 'Закрыто. Часы работы 8:00–22:00.'); return; }
       kv(b, 'В кармане', U.money(P.money));
-      const cats = [['food', 'Продукты'], ['part', 'Сантехника и расходники'], ['tool', 'Инструмент'], ['home', 'Для дома и души']];
+      const cats = [['food', 'Продукты'], ['part', 'Сантехника и расходники'], ['tool', 'Инструмент'], ['home', 'Для дома и души'], ['upg', 'Модернизация ЦТП — за свои']];
       cats.forEach(([k, l]) => {
         sect(b, l);
         D.SHOP_ORDER.filter((id) => D.ITEMS[id].kind === k).forEach((id) => {
           const it = D.ITEMS[id];
-          const owned = (k === 'tool' && P.tools[id]) || (k === 'home' && P.home[id]);
+          const owned = (k === 'tool' && P.tools[id]) || (k === 'home' && P.home[id]) || (k === 'upg' && A().upgLeft(id) <= 0);
           const n = P.inv[id] || 0;
           btn(b, it.name + ' — ' + U.money(it.price) + (owned ? ' (есть)' : n ? ' (есть ' + n + ')' : ''), () => A().buy(id),
             { disabled: !!owned, cls: P.money < it.price && !owned ? 'warn' : '', sub: it.desc });
@@ -830,18 +861,18 @@ G.UI = (() => {
   }
   function skladTab(b) {
     const s = G.S;
-    para(b, 'Запчасти со склада управляющей компании — бесплатно, но привезут на ЦТП к 9:00 следующего дня. Одна заявка в день, лимит ' + U.money(D.SKLAD_LIMIT) + ' в месяц.', true);
-    kv(b, 'Использовано в этом месяце', U.money(s.sklad.spent) + ' из ' + U.money(D.SKLAD_LIMIT));
+    const lim = A().skladLimit(), left = A().ordersLeft();
+    para(b, 'Запчасти со склада управляющей компании — бесплатно, но привезут на ЦТП к 9:00 следующего дня. ' + (G.Ev.hasPerk('boss') ? 'Две заявки' : 'Одна заявка') + ' в день, лимит ' + U.money(lim) + ' в месяц.', true);
+    kv(b, 'Использовано в этом месяце', U.money(s.sklad.spent) + ' из ' + U.money(lim));
     let sum = 0;
-    const rank = G.Ev.rankIdx() + 3;
     Object.keys(D.ITEMS).filter((id) => D.ITEMS[id].sklad).forEach((id) => {
       const it = D.ITEMS[id];
-      const locked = it.minRank && rank < it.minRank;
+      const locked = it.perk && !G.Ev.hasPerk(it.perk);
       const n = orderDraft[id] || 0;
       sum += n * it.price;
       const row = h('div', 'qty');
       row.dataset.item = id;
-      row.innerHTML = '<span>' + esc(it.name) + (locked ? ' (с ' + it.minRank + '-го разряда)' : '') + '<br><small style="color:#9fb0c4">' + U.money(it.price) + ' · в ящике: ' + inv(id) + '</small></span>';
+      row.innerHTML = '<span>' + esc(it.name) + (locked ? ' (умение «' + D.PERKS[4].find((x) => x.id === it.perk).name + '»)' : '') + '<br><small style="color:#9fb0c4">' + U.money(it.price) + ' · в ящике: ' + inv(id) + '</small></span>';
       const minus = h('button', '', '−'), plus = h('button', '', '+'), q = h('b', '', String(n));
       minus.onclick = () => { orderDraft[id] = Math.max(0, n - 1); render(); };
       plus.onclick = () => { if (!locked) { orderDraft[id] = Math.min(9, n + 1); render(); } };
@@ -849,7 +880,7 @@ G.UI = (() => {
       row.append(minus, q, plus);
       b.appendChild(row);
     });
-    kv(b, 'Сумма заявки', U.money(sum), s.sklad.spent + sum > D.SKLAD_LIMIT ? 'bad' : '');
+    kv(b, 'Сумма заявки', U.money(sum), s.sklad.spent + sum > lim ? 'bad' : '');
     btn(b, 'Отправить заявку на склад', () => {
       const items = {};
       for (const id in orderDraft) if (orderDraft[id] > 0) items[id] = orderDraft[id];
@@ -857,8 +888,8 @@ G.UI = (() => {
       A().order(items);
       if (s.orders.length > before) orderDraft = {};
       render();
-    }, { cls: 'main', disabled: s.sklad.lastDay === U.day(s.t) });
-    if (s.sklad.lastDay === U.day(s.t)) para(b, 'Сегодня заявка уже отправлена.', true);
+    }, { cls: 'main', disabled: left <= 0 });
+    if (left <= 0) para(b, 'Сегодня заявка уже отправлена.', true);
     if (s.orders.length) { sect(b, 'В пути'); s.orders.forEach((o) => para(b, U.dateStr(o.arrive) + ', 9:00 — ' + D.itemsText(o.items), true)); }
   }
   function meTab(b) {
@@ -869,9 +900,12 @@ G.UI = (() => {
     kv(b, 'Опыт', P.xp + (nx ? ' / ' + nx.xp + ' до ' + nx.r + '-го' : ' (максимум)'));
     if (nx) meter(b, (P.xp - rk.xp) / (nx.xp - rk.xp) * 100, '#f0a020');
     kv(b, 'Оклад', U.money(rk.salary) + ' / мес');
+    const pend = G.Ev.perkPending();
+    if (pend) btn(b, 'Выбрать умение за ' + pend + '-й разряд', () => perkChoice(true), { cls: 'main' });
+    Object.keys(P.perks).forEach((r) => { const pk = D.PERKS[r].find((x) => x.id === P.perks[r]); kv(b, 'Умение (' + r + '-й разряд)', pk.name, 'ok'); });
     kv(b, 'Доверие начальства', Math.round(P.trust) + ' / 100', P.trust > 60 ? 'ok' : P.trust > 30 ? 'warn' : 'bad');
     meter(b, P.trust, P.trust > 60 ? '#4caf50' : P.trust > 30 ? '#f0b030' : '#e53935');
-    para(b, 'Аванс 20-го, зарплата 5-го. Премия — при доверии от 55. Доверие 0 — увольнение.', true);
+    para(b, 'Аванс 20-го, зарплата 5-го (с неё же — квартплата 9 000 ₽). Премия: доверие от 55 — 10%, от 75 — 20%, от 90 — 30%. Выше 90 доверие поднимают только дела. 5-го — табель от Петровича. Доверие 0 — увольнение.', true);
     sect(b, 'Статистика');
     kv(b, 'Дней на ЦТП', String(U.day(s.t) + 1));
     kv(b, 'Ремонтов', String(s.stats.repairs));
@@ -927,9 +961,10 @@ G.UI = (() => {
       '<p><b>Замена задвижки:</b> остановить насосы контура → закрыть вторую задвижку на той же трубе → открыть дренаж, дождаться 0 бар → открутить болты, поставить новую, затянуть крест-накрест → открыть задвижки, закрыть дренаж, подпиткой поднять давление до ~4 бар (ГВС наполнится сам) → запустить насос.</p>' +
       '<p><b>Пуск отопления</b> (если стоит): закрыть «Дренаж отопл.» → открыть задвижки Зд1–Зд4 → открыть подпитку и ждать ~4 бар (время должно идти, ×5 ускорит) → закрыть подпитку → запустить Н1 или Н2. В шкафу управления есть чек-лист: что мешает — красным.</p>' +
       '<p><b>Насосы</b> работают парами: рабочий и резервный. Смазывай подшипники, меняй уплотнения, следи за шумом. При ремонте по техкарте сначала обесточь — иначе удар током.</p>' +
-      '<p><b>Квартал.</b> Над домами — температура в квартирах и горячей воды. Если холодно — жильцы звонят. Регулятор в шкафу управления позволяет поднять или опустить график.</p>' +
+      '<p><b>Квартал.</b> Над домами — температура в квартирах и горячей воды, точка слева: зелёная — норма, жёлтая — на грани, красная — плохо. Если холодно — сначала предупредит диспетчер, потом жильцы звонят. Регулятор в шкафу управления позволяет поднять или опустить график.</p>' +
       '<p><b>Тепловые камеры.</b> Перед каждым домом на тротуаре — люк ТК: внизу ответвление теплотрассы на дом и 4 задвижки. При порыве у дома вызови аварийку и сам спустись перекрыть ввод (Т1+Т2 — отопление, Т3+Т4 — горячая вода): вода перестанет уходить, бригада быстрее управится. После ремонта задвижки надо открыть. Летом — ревизия камер, чтобы задвижки не закисли.</p>' +
-      '<p><b>Жизнь.</b> Ешь, спи, отдыхай. Зарплата 5-го и 20-го. Запчасти бесплатно со склада (через телефон, к утру) или сразу в магазине за свои. Шабашки у жильцов — подработка.</p>' +
+      '<p><b>Жизнь.</b> Ешь, спи, отдыхай. Зарплата 5-го и 20-го, 5-го же — квартплата и табель от Петровича: премия зависит от доверия. Запчасти бесплатно со склада (через телефон, к утру) или сразу в магазине за свои. Шабашки у жильцов — подработка. Лишние деньги — в модернизацию ЦТП (магазин): частотники, погодный контроллер, шаровые краны в камеры.</p>' +
+      '<p><b>Разряды.</b> Опыт — за работу и справочник. На каждом новом разряде выбираешь одно из двух умений (Телефон → Я).</p>' +
       '<p><b>Лето</b> (после 15 мая): ремонтная кампания по плану начальника — опрессовка отопления, ревизия насосов, грязевик. В июне теплосеть отключает горячую воду на 10 дней. Можно взять отпуск (Телефон → Я). 1 сентября — комиссия по готовности, 1 октября — пуск отопления.</p>' +
       '<p><b>Цель</b> — продержаться до конца отопительного сезона 15 мая и не лишиться доверия начальства. Время: кнопки ❚❚ / ×1 / ×5 / ×20.</p>' +
       '<div id="h-ok"></div></div>');
@@ -941,6 +976,18 @@ G.UI = (() => {
       '<p>Из ЦТП в землю уходят четыре трубы. Если они остынут — телефон не замолчит. Следи за насосами, меняй задвижки, не забывай есть и спать.</p>' +
       '<p>Начальник уже написал тебе. Открой <b>Телефон</b>, а потом иди на ЦТП — он рядом, через дорогу от магазина.</p><div id="i-ok"></div></div>');
     btn(o.querySelector('#i-ok'), 'Начать смену', () => { closeOverlay(); }, { cls: 'main' });
+  }
+  // выбор умения на новом разряде; «Решу потом» — до следующего входа в игру или Телефон → Я
+  let perkLater = false;
+  function perkChoice(force) {
+    const r = G.Ev.perkPending();
+    if (!r || (perkLater && !force)) return;
+    perkLater = false;
+    closePanel(true);
+    const o = overlay('<div class="ov text"><h2>' + r + '-й разряд! Выбери умение</h2><p>Одно из двух — навсегда. Петрович ждёт ответа.</p><div id="pk-list" class="menu"></div></div>');
+    const list = o.querySelector('#pk-list');
+    D.PERKS[r].forEach((pk, n) => btn(list, pk.name, () => { G.Ev.pickPerk(r, n); closeOverlay(); reopen(); }, { cls: 'main', sub: pk.desc }));
+    btn(list, 'Решу потом', () => { perkLater = true; closeOverlay(); reopen(); }, { cls: 'ghost', sub: 'Выбрать можно в Телефон → Я' });
   }
   function victory() {
     const s = G.S;
@@ -958,7 +1005,7 @@ G.UI = (() => {
   }
 
   const HINTS = {
-    street: 'Это твой квартал. Тапни по зданию — пойдёшь туда. Над домами: температура в квартирах и горячей воды. Свайп — прокрутка. Под землёй видно 4 трубы, перед каждым домом — люк тепловой камеры (ТК).',
+    street: 'Это твой квартал. Тапни по зданию — пойдёшь туда. Над домами: температура в квартирах и горячей воды, цвет точки — всё ли у жильцов в порядке. Свайп — прокрутка. Под землёй видно 4 трубы, перед каждым домом — люк тепловой камеры (ТК).',
     ctp: 'Твой ЦТП. Тапай по насосам, задвижкам, манометрам. Красная — Т1, синяя — Т2 (отопление), оранжевая — Т3, фиолетовая — Т4 (ГВС). «Шкаф» — чек-лист пуска. Свайп двигает помещение.',
     home: 'Квартира. Кровать — сон, кухня — еда, телевизор — настроение. Батарея греется от твоего же ЦТП.',
     shop: 'Магазин: еда, запчасти, инструмент. Запчасти бесплатно — через склад в телефоне, но привезут только к утру.',
@@ -984,5 +1031,5 @@ G.UI = (() => {
 
   return Object.assign(api, { init, hud, tick, toast, onMessage, say, flash, ring, panel, reopen, closePanel, hidePanelForBusy, isModal,
     panelOpen, overlayOpen, closeOverlay, panelPump, panelValve, panelHX, panelNet, panelHvs, panelEquip, openObj, ctpPanel, checklist, pressReport, panelFilter, panelDrain, panelFeed, panelGauge, panelCabinet,
-    panelDesk, panelBox, panelHome, panelHouse, panelBasement, panelHatch, panelWell, panelShop, phone, obhodReport, menu, help, intro, victory, gameOver, hint });
+    panelDesk, panelBox, panelHome, panelHouse, panelBasement, panelHatch, panelWell, panelShop, phone, obhodReport, menu, help, intro, victory, gameOver, hint, perkChoice });
 })();

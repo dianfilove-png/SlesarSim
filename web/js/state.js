@@ -8,6 +8,8 @@ G.St = (() => {
   function newWell(t0) {
     return { revAt: -1, fixAt: null, v: [0, 1, 2, 3].map(() => ({ open: true, stuck: false, broken: false, lastOp: (t0 || 0) - Math.round(120 + Math.random() * 300) * 1440 })) };
   }
+  // модернизация ЦТП: что установлено (частотники — по насосам, шаровые краны — по камерам)
+  const newUpg = () => ({ vfd: [false, false, false, false], wctl: false, modem: false, magnet: false, ballv: [false, false, false, false, false], sms: false });
   // старые сохранения: до камер дом отсекала аварийка флагом cutoff
   function migrate(S) {
     if (!S.wells) {
@@ -19,6 +21,19 @@ G.St = (() => {
       }
     }
     if (S.well === undefined) S.well = 0;
+    if (S.wx.frost === undefined) S.wx.frost = null;
+    // до умений: разряды по старым порогам опыта — пересчитываем, чтобы разряд не упал; умения за взятые разряды выберет при входе
+    if (!S.p.perks) {
+      const o = [0, 250, 700, 1500], n = G.D.RANKS.map((r) => r.xp);
+      let k = 0;
+      while (k < 3 && S.p.xp >= o[k + 1]) k++;
+      S.p.xp = Math.round(n[k] + (S.p.xp - o[k]) * (k < 3 ? (n[k + 1] - n[k]) / (o[k + 1] - o[k]) : 2));
+      S.p.perks = {};
+    }
+    if (!S.upg) S.upg = newUpg();
+    if (S.heat.smsSent === undefined) S.heat.smsSent = false;
+    if (S.sklad.today === undefined) S.sklad.today = 1;
+    if (!S.flags.tabel) S.flags.tabel = G.Ev.tabelMark(S);
     S.houses.forEach((h) => { delete h.cutoff; });
     return S;
   }
@@ -33,16 +48,16 @@ G.St = (() => {
       house: 1,
       well: 0,
       px: 1070,
-      wx: { dev: 0, snap: null, snow: false },
+      wx: { dev: 0, snap: null, frost: null, snow: false },
       tout: 8, tnet: 75,
       ev: { netDrop: null, power: null, hvs: null, burst: null, inspect: null },
       p: {
         energy: 85, hunger: 70, health: 90, mood: 60, money: 6500, xp: 0, trust: 60,
         inv: { sandwich: 2, doshirak: 2, coffee: 3, grease: 2, gasket: 2, wd40: 2 },
-        tools: {}, home: {}, sleepingSince: null,
+        tools: {}, home: {}, sleepingSince: null, perks: {},
       },
       heat: { ps: 4.1, drain: false, feed: false, auto: false, autoOn: false, q: 0.9, t1: 52, t2: 40, p1: 6, p2: 4, corr: 0,
-        foul: 22, clog: 38, lowAlarm: false, flushedAt: -1, cleanedAt: -1, blowCd: 0 },
+        foul: 22, clog: 38, lowAlarm: false, smsSent: false, flushedAt: -1, cleanedAt: -1, blowCd: 0 },
       gvs: { ps: 4.6, drain: false, q: 0.9, t3: 60, t4: 54, p3: 4.9, p4: 4.4, set: 62, foul: 40, lowAlarm: false, flushedAt: -1 },
       pumps: [
         { id: 'Н1', circ: 'heat', on: true, broken: false, bear: 34, seal: 22, lube: 45, hours: 8400 },
@@ -63,11 +78,12 @@ G.St = (() => {
       houses: D.HOUSES.map((h) => ({ id: h.id, tin: 21 + Math.random(), ttap: 58, sat: 62 + Math.random() * 10,
         air: 0, leak: 0, last: {} })),
       wells: D.HOUSES.map(() => newWell()),
+      upg: newUpg(),
       flood: 0,
       tasks: [],
       msgs: [],
       orders: [],
-      sklad: { month: 9, spent: 0, lastDay: -1 },
+      sklad: { month: 9, spent: 0, lastDay: -1, today: 0 },
       journal: { lastObhod: -1, entries: [] },
       flags: { late: -1, obhodChecked: -1, seasonEnd: false, seasonStart: true, hints: {} },
       stats: { repairs: 0, tasksDone: 0, tasksFailed: 0, complaints: 0, earned: 0, shocks: 0 },
@@ -76,6 +92,7 @@ G.St = (() => {
       over: null,
     };
     S.valves.forEach((v) => { v.open = true; v.stuck = false; v.lastOp = -20000; v.replacedAt = -1; });
+    S.valves[5].lastOp = S.t - 1440; // Зд6 крутили вчера — в обучении закисает редко
     S.pumps.forEach((p) => { p.serviced = -1; });
     return S;
   }

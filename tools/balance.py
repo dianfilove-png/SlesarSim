@@ -11,6 +11,7 @@ BOT = """
 (() => {
   const s = G.S, U = G.U, h = U.hour(s.t), day = U.day(s.t);
   s.p.energy = 90; s.p.hunger = 90; s.p.health = 95; s.p.mood = 60;
+  if (G.Ev.perkPending()) G.Ev.pickPerk(G.Ev.perkPending(), 0);
   const work = U.isWorkday(s.t) && h >= 8 && h < 17;
   s.scene = work ? 'ctp' : 'street';
   if (U.isWorkday(s.t) && h >= 9 && s.journal.lastObhod !== day) { s.journal.lastObhod = day; s.journal.lastObhodT = s.t; s.journal.findings = []; }

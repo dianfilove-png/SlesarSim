@@ -141,6 +141,11 @@ G.Sim = (() => {
       H.blowCd = 120;
       G.Ev.blowout();
     }
+    // SMS-датчик давления: раньше диспетчера, будит и снимает ускорение
+    if (S.upg.sms && H.ps < 3 && !H.smsSent && (season || anyOn(S, 'heat'))) {
+      H.smsSent = true;
+      G.Ev.msg('SMS-датчик ЦТП-7', 'Давление в отоплении ' + H.ps.toFixed(1) + ' бар и падает!', true);
+    } else if (H.ps > 3.5) H.smsSent = false;
     if (H.ps < 2 && !H.lowAlarm && (season || anyOn(S, 'heat'))) {
       H.lowAlarm = true;
       G.Ev.alarm('Падение давления в отоплении: ' + H.ps.toFixed(1) + ' бар! Нужна подпитка.');
@@ -217,18 +222,19 @@ G.Sim = (() => {
       const cut = (season && !heatOn ? 0.3 : 0) + (wv[2].open && wv[3].open ? 0 : 0.2);
       const bad = cold + hot + noHot + (hs.leak ? 0.5 : 0) + (hs.air ? 0.4 : 0) + cut;
       hs.sat = U.clamp(hs.sat + (bad > 0.05 ? -bad * 0.004 : 0.003), 0, 100);
-      G.Ev.complaints(i, cold, hot, noHot, night);
+      G.Ev.complaints(i, cold, hot, noHot, night, season && S.t >= (S.flags.coldGrace || 0));
     }
   }
 
   function pumpsWear(S) {
-    for (const p of S.pumps) {
-      if (!p.on || p.broken) continue;
+    S.pumps.forEach((p, i) => {
+      if (!p.on || p.broken) return;
       p.hours += 1 / 60;
       p.lube = Math.max(0, p.lube - 0.006);
-      wearRun(p, 0.0011 * (p.lube < 25 ? 3 : 1), 0.0016);
+      const k = S.upg.vfd[i] ? 0.6 : 1; // частотник: плавный пуск, обороты по нагрузке
+      wearRun(p, 0.0011 * (p.lube < 25 ? 3 : 1) * k, 0.0016 * k);
       if (p.bear >= 100) G.Ev.pumpBroke(p);
-    }
+    });
   }
 
   function valvesWear(S, t) {
@@ -261,6 +267,13 @@ G.Sim = (() => {
     P.mood = U.clamp(P.mood, 0, 100);
   }
 
+  // самочувствие дома для точки на улице: 0 — норма, 1 — на грани, 2 — плохо (квартиры — в сезон, ГВС — всегда)
+  const houseLevel = (S, hs) => {
+    const season = heatSeason(S.t);
+    if ((season && (hs.tin < 18.5 || hs.tin > 26)) || hs.ttap < 50) return 2;
+    if ((season && (hs.tin < 19.5 || hs.tin > 25)) || hs.ttap < 55) return 1;
+    return 0;
+  };
   // температура обратной сетевой воды, уходящей на ТЭЦ
   const netReturn = (S) => (heatSeason(S.t) && S.heat.q > 0.05 ? Math.min(S.tnet - 10, S.heat.t2 + 6) : 42);
 
@@ -276,7 +289,7 @@ G.Sim = (() => {
     houses(S, season, h, draw);
     pumpsWear(S);
     valvesWear(S, t);
-    if (season) S.heat.clog = Math.min(100, S.heat.clog + 0.0011 * (S.heat.q > 0.1 ? 1 : 0));
+    if (season) S.heat.clog = Math.min(100, S.heat.clog + 0.0011 * (S.heat.q > 0.1 ? 1 : 0) * (S.upg.magnet ? 0.5 : 1));
     S.heat.foul = Math.min(100, S.heat.foul + (season ? 0.0002 : 0));
     S.gvs.foul = Math.min(100, S.gvs.foul + 0.00038);
     const inLeak = leakOf(S, 'heat') + leakOf(S, 'gvs');
@@ -285,6 +298,6 @@ G.Sim = (() => {
     G.Ev.tick(S, season);
   }
 
-  return { step, netReturn, heatLeak, maxT, wellOpen, burstLeakK, burstIsolated, feedNetRate, P_LOW, P_CLOSE, P_WARN, P_HIGH, FEED_RATE, seasonal, heatSeason, tSched, drawProfile, pumpEff, headOf, pipeOpen, leakOf, sealLeak,
+  return { step, houseLevel, netReturn, heatLeak, maxT, wellOpen, burstLeakK, burstIsolated, feedNetRate, P_LOW, P_CLOSE, P_WARN, P_HIGH, FEED_RATE, seasonal, heatSeason, tSched, drawProfile, pumpEff, headOf, pipeOpen, leakOf, sealLeak,
     valveLeak, flangeLeak, circPumps, anyOn, GLAND };
 })();
