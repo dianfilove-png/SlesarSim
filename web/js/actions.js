@@ -219,10 +219,11 @@ G.Act = (() => {
   }
   function feed() {
     const H = G.S.heat;
-    if (G.S.ev.hvs && !H.feed) return toast('Холодной воды нет — подпитывать нечем', 'bad');
     busy((H.feed ? 'Закрываю' : 'Открываю') + ' подпитку', 1, {}, () => {
       H.feed = !H.feed;
-      toast(H.feed ? 'Подпитка открыта. Следи за манометром — выше 6 бар опасно!' : 'Подпитка закрыта');
+      const pn = Sim.pNetRet(G.S);
+      if (H.feed && pn <= H.ps) toast('Кран открыт, но вода не идёт: в обратке теплосети ' + pn.toFixed(1) + ' бар — не выше, чем в контуре.', 'bad');
+      else toast(H.feed ? 'Подпитка из обратки теплосети открыта. Следи за манометром, на ~4 бар закрывай!' : 'Подпитка закрыта');
     });
   }
   function corr(d) { const H = G.S.heat; H.corr = U.clamp(H.corr + d, -15, 15); G.UI.reopen(); }

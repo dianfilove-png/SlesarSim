@@ -35,6 +35,15 @@ G.St = (() => {
     if (S.sklad.today === undefined) S.sklad.today = 1;
     if (!S.flags.tabel) S.flags.tabel = G.Ev.tabelMark(S);
     S.houses.forEach((h) => { delete h.cutoff; });
+    // до реальной физики: расходы были в долях (1 — норма), теперь м³/ч; дома без своих Т1/Т2/расхода
+    if (S.heat.gn === undefined) {
+      S.heat.q *= G.Sim.Q_NOM; S.gvs.q *= G.Sim.GC_NOM;
+      Object.assign(S.heat, { gn: 0, kw: 0, qf: 0, qppk: 0, trh: S.heat.t2, ppkOn: false, ppkStuck: false });
+      Object.assign(S.gvs, { gn: 0, kw: 0, draw: 0 });
+      S.houses.forEach((h) => { Object.assign(h, { q: 0, qin: 0, qr: 0, t1: S.heat.t1, t2: S.heat.t2 }); });
+    }
+    if (S.ev.netLowP === undefined) S.ev.netLowP = null;
+    if (S.thvs === undefined) S.thvs = 8;
     return S;
   }
 
@@ -49,16 +58,17 @@ G.St = (() => {
       well: 0,
       px: 1070,
       wx: { dev: 0, snap: null, frost: null, snow: false },
-      tout: 8, tnet: 75,
-      ev: { netDrop: null, power: null, hvs: null, burst: null, inspect: null },
+      tout: 8, tnet: 75, thvs: 10,
+      ev: { netDrop: null, netLowP: null, power: null, hvs: null, burst: null, inspect: null },
       p: {
         energy: 85, hunger: 70, health: 90, mood: 60, money: 6500, xp: 0, trust: 60,
         inv: { sandwich: 2, doshirak: 2, coffee: 3, grease: 2, gasket: 2, wd40: 2 },
         tools: {}, home: {}, sleepingSince: null, perks: {},
       },
-      heat: { ps: 4.1, drain: false, feed: false, auto: false, autoOn: false, q: 0.9, t1: 52, t2: 40, p1: 6, p2: 4, corr: 0,
-        foul: 22, clog: 38, lowAlarm: false, smsSent: false, flushedAt: -1, cleanedAt: -1, blowCd: 0 },
-      gvs: { ps: 4.6, drain: false, q: 0.9, t3: 60, t4: 54, p3: 4.9, p4: 4.4, set: 62, foul: 40, lowAlarm: false, flushedAt: -1 },
+      // расходы — м³/ч, мощность — кВт; gn — сетевая вода через ТО/ВВП; qf — подпитка, qppk — сброс ППК
+      heat: { ps: 4.1, drain: false, feed: false, auto: false, autoOn: false, q: 95, t1: 52, t2: 40, p1: 6, p2: 4.5, corr: 0, gn: 20, kw: 1000, qf: 0, qppk: 0, trh: 45,
+        ppkOn: false, ppkStuck: false, foul: 22, clog: 38, lowAlarm: false, smsSent: false, flushedAt: -1, cleanedAt: -1, blowCd: 0 },
+      gvs: { ps: 4.6, drain: false, q: 4.4, t3: 60, t4: 54, p3: 5, p4: 4.6, set: 62, foul: 40, gn: 2, kw: 300, draw: 6, lowAlarm: false, flushedAt: -1 },
       pumps: [
         { id: 'Н1', circ: 'heat', on: true, broken: false, bear: 34, seal: 22, lube: 45, hours: 8400 },
         { id: 'Н2', circ: 'heat', on: false, broken: false, bear: 15, seal: 12, lube: 70, hours: 6100 },
@@ -76,7 +86,7 @@ G.St = (() => {
         { id: 'Зд8', pipe: 4, outer: false, cond: 85, gland: 0, packing: 3, flange: 0 },
       ],
       houses: D.HOUSES.map((h) => ({ id: h.id, tin: 21 + Math.random(), ttap: 58, sat: 62 + Math.random() * 10,
-        air: 0, leak: 0, last: {} })),
+        air: 0, leak: 0, last: {}, q: 0, qin: 0, qr: 0, t1: 52, t2: 40 })),
       wells: D.HOUSES.map(() => newWell()),
       upg: newUpg(),
       flood: 0,

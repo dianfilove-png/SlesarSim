@@ -303,7 +303,8 @@ G.R = (() => {
       ctx.beginPath(); ctx.moveTo(-26, y); ctx.lineTo(nx, y); ctx.stroke(); ctx.setLineDash([]);
     });
     tag('магистраль от ТЭЦ → ' + U.deg(s.tnet) + ' / ' + U.deg(tRet), 300, cy - 4, '#3a1414', '#ffd36b', 10);
-    const ps = [[1, H.t1, H.q, 1], [2, H.t2, H.q, -1], [3, W.t3, W.ps > 1 ? 0.6 + W.q * 0.4 : 0, 1], [4, W.t4, W.q, -1]];
+    const qh = G.Sim.qn(s, 'heat'), qg = G.Sim.qn(s, 'gvs');
+    const ps = [[1, H.t1, qh, 1], [2, H.t2, qh, -1], [3, W.t3, W.ps > 1 ? 0.6 + qg * 0.4 : 0, 1], [4, W.t4, qg, -1]];
     ps.forEach(([pipe, t, q, dir], k) => {
       const y = cy + 2 + k * 12;
       ctx.strokeStyle = tempColor(t, D.PIPES[pipe].color);
@@ -499,7 +500,7 @@ G.R = (() => {
     rect(x - 1.5, y + 14, 3, 12, '#444');
     rr(x + 17, y - 17, 58, 32, 4); ctx.fillStyle = 'rgba(10,14,20,.85)'; ctx.fill();
     text(U.deg(t) + 'C', x + 46, y - 8, 12, t > 50 ? '#ffb199' : '#9fd0ff', 'center', true, false);
-    text(p.toFixed(1) + ' бар', x + 46, y + 7, 11, p > 6.5 || p < 2 ? '#ff6b5b' : '#e8f0ff', 'center', true, false);
+    text(p.toFixed(1) + ' бар', x + 46, y + 7, 11, p > 8 || p < 2 ? '#ff6b5b' : '#e8f0ff', 'center', true, false);
     addHit('gauge:' + pipe, x - 18, y - 20, 100, 44);
   }
   function drawHX(x, y0, y1, label, foul, id) {
@@ -609,7 +610,7 @@ G.R = (() => {
     const season = G.Sim.heatSeason(s.t);
     const tRet = G.Sim.netReturn(s);
     const NS = '#8e1b1b', NR = '#1b2f70';
-    const qh = season ? H.q : 0, qg = Wg.ps > 1 ? 0.6 : 0;
+    const qh = season ? H.gn / G.Sim.GN_MAX * 1.5 : 0, qg = Wg.gn > 0.1 ? 0.6 : 0;
     rect(CT.netS - 30, CT.floor, CT.netR - CT.netS + 60, 12, '#3a3936');
     pipeSeg(CT.netS, CT.floor + 6, CT.netS, 300, NS, s.tnet, 11);
     pipeSeg(CT.netS, 300, CT.netS, 100, NS, s.tnet, 11);
@@ -630,10 +631,12 @@ G.R = (() => {
     tag('обратка ' + U.deg(tRet), CT.netR + 8, 256, NR, '#fff', 10);
     tag('ВВОД ОТ ТЭЦ ↑', (CT.netS + CT.netR) / 2 + 10, 76, s.ev.netDrop ? '#b3261e' : '#222', '#ffd36b', 12);
     addHit('net', CT.netS - 34, 84, CT.netR - CT.netS + 68, CT.floor - 70);
-    // ---- ХВС из водопровода: врезка в обратку ГВС (Т4) и подпитка отопления
+    // ---- подпитка отопления: от обратки теплосети к Т2 (идёт, пока давление в сети выше, чем в контуре)
+    ctx.strokeStyle = tempColor(tRet, NR); ctx.lineWidth = 6; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(CT.netR, 262); ctx.lineTo(CT.feedX, 262); ctx.lineTo(CT.feedX, CT.Y[2]); ctx.stroke();
+    flowMarks([[CT.netR, 262], [CT.feedX, 262], [CT.feedX, CT.Y[2]]], H.qf > 0.01 ? 0.5 : 0, 1);
+    // ---- ХВС из водопровода: только на ГВС — врезка в циркуляцию Т4 перед ВВП
     const HC = '#3fa9d6';
-    ctx.strokeStyle = HC; ctx.lineWidth = 6; ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(CT.hvsX, 492); ctx.lineTo(CT.feedX, 492); ctx.lineTo(CT.feedX, CT.Y[2]); ctx.stroke();
     pipeSeg(CT.hvsX, CT.floor + 6, CT.hvsX, CT.Y[4], HC, 30, 9);
     flowMarks([[CT.hvsX, CT.floor], [CT.hvsX, CT.Y[4]]], s.ev.hvs ? 0 : 0.5, 1);
     rr(CT.hvsX - 10, 462, 20, 16, 3); ctx.fillStyle = '#e8e4da'; ctx.fill(); circle(CT.hvsX, 470, 5, '#1d4f91');
@@ -645,11 +648,11 @@ G.R = (() => {
     pipeSeg(CT.br0, CT.Y[2], CT.br0, CT.Y2b, D.PIPES[2].color, tp[2]); pipeSeg(CT.br0, CT.Y2b, CT.br1, CT.Y2b, D.PIPES[2].color, tp[2]); pipeSeg(CT.br1, CT.Y2b, CT.br1, CT.Y[2], D.PIPES[2].color, tp[2]);
     pipeSeg(CT.br0, CT.Y[4], CT.br0, CT.Y4b, D.PIPES[4].color, tp[4]); pipeSeg(CT.br0, CT.Y4b, CT.br1, CT.Y4b, D.PIPES[4].color, tp[4]); pipeSeg(CT.br1, CT.Y4b, CT.br1, CT.Y[4], D.PIPES[4].color, tp[4]);
     circle(CT.hvsX, CT.Y[4], 8, HC);
-    const gq = Wg.ps > 1 && G.Sim.pipeOpen(s, 3) ? Math.max(Wg.q, 0.35) : 0;
-    flowMarks([[CT.x0, CT.Y[1]], [CT.x1, CT.Y[1]]], H.q, 1);
-    flowMarks([[CT.x1, CT.Y[2]], [CT.x0, CT.Y[2]]], H.q, 1);
+    const gq = Wg.ps > 1 && G.Sim.pipeOpen(s, 3) ? Math.max(G.Sim.qn(s, 'gvs'), 0.35) : 0, hq = G.Sim.qn(s, 'heat');
+    flowMarks([[CT.x0, CT.Y[1]], [CT.x1, CT.Y[1]]], hq, 1);
+    flowMarks([[CT.x1, CT.Y[2]], [CT.x0, CT.Y[2]]], hq, 1);
     flowMarks([[CT.x0, CT.Y[3]], [CT.x1, CT.Y[3]]], gq, 1);
-    flowMarks([[CT.x1, CT.Y[4]], [CT.x0, CT.Y[4]]], Wg.q, 1);
+    flowMarks([[CT.x1, CT.Y[4]], [CT.x0, CT.Y[4]]], G.Sim.qn(s, 'gvs'), 1);
     for (let p = 1; p <= 4; p++) tag(D.PIPES[p].name, CT.x0 + 22, CT.Y[p] - 16, D.PIPES[p].color, '#fff', 12);
     text('← Н1/Н2 качают Т2', CT.br0 - 10, CT.Y2b + 2, 11, '#fff', 'right', true);
     text('← Н3/Н4 качают Т4', CT.br0 - 10, CT.Y4b - 2, 11, '#fff', 'right', true);
@@ -664,7 +667,7 @@ G.R = (() => {
     drawVVP(Wg, tp);
     // подпитка, дренажи
     smallValve(CT.feedX, 292, H.feed || (H.auto && H.autoOn), '', 'feed', true);
-    text(H.auto ? 'Подпитка (авто)' : 'Подпитка из ХВС', CT.feedX + 14, 292, 11, '#fff', 'left', true);
+    text(H.auto ? 'Подпитка (авто)' : 'Подпитка из сети', CT.feedX + 14, 292, 11, '#fff', 'left', true);
     if (H.auto) { rr(CT.feedX - 14, 300, 28, 16, 3); ctx.fillStyle = '#c9a227'; ctx.fill(); text('РД', CT.feedX, 308, 9, '#222', 'center', true, false); }
     const dx = CT.dx;
     ctx.strokeStyle = '#2b2f35'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(dx, 252); ctx.bezierCurveTo(dx + 30, 300, dx + 20, 420, dx, 500); ctx.stroke();
@@ -738,7 +741,7 @@ G.R = (() => {
     addHit('window', 380, 130, 180, 190);
     // батарея
     const hs = s.houses[0];
-    const rt = (s.heat.t1 + s.heat.t2) / 2 * (s.heat.q > 0.05 ? 1 : 0.5);
+    const rt = G.Sim.qn(s, 'heat') > 0.05 ? (hs.t1 + hs.t2) / 2 : hs.tin;
     for (let k = 0; k < 10; k++) { rr(398 + k * 15, 342, 12, 56, 4); ctx.fillStyle = mix('#8f9aa6', '#d98a6a', (rt - 25) / 50); ctx.fill(); }
     if (rt > 45) for (let k = 0; k < 3; k++) { const kk = (anim * 0.3 + k / 3) % 1; ctx.strokeStyle = 'rgba(255,255,255,' + 0.25 * (1 - kk) + ')'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(420 + k * 50, 338 - kk * 30); ctx.quadraticCurveTo(428 + k * 50, 330 - kk * 30, 420 + k * 50, 320 - kk * 30); ctx.stroke(); }
     text('В комнате ' + U.deg1(hs.tin), 470, 108, 13, '#3a2a1a', 'center', true, false);
@@ -819,8 +822,7 @@ G.R = (() => {
     bgBlit();
     ctx.save(); ctx.translate(tx, ty);
     const H = s.heat, W = s.gvs;
-    const t1 = H.t1 - (1 - hd.dist) * 10;
-    const tt = [t1, H.t2, hs.ttap, hs.ttap - 5];
+    const tt = [hs.t1, hs.t2, hs.ttap, hs.ttap - 5];
     const ys = [200, 245, 290, 335];
     for (let p = 1; p <= 4; p++) {
       const y = ys[p - 1];
@@ -898,8 +900,9 @@ G.R = (() => {
     bgBlit();
     ctx.save(); ctx.translate(tx, ty);
     const H = s.heat, W = s.gvs;
-    const tMain = [H.t1 - (1 - hd.dist) * 10, H.t2, W.t3, W.t4];
-    const qMain = [H.q, H.q, W.ps > 1 ? 0.6 + W.q * 0.4 : 0, W.q];
+    const hs = s.houses[i], qh = G.Sim.qn(s, 'heat'), qg = G.Sim.qn(s, 'gvs');
+    const tMain = [hs.t1, H.t2, W.t3, W.t4];
+    const qMain = [qh, qh, W.ps > 1 ? 0.6 + qg * 0.4 : 0, qg];
     // магистраль квартала проходит насквозь
     for (let k = 0; k < 4; k++) {
       const y = WL.main[k], c = D.PIPES[k + 1].color;

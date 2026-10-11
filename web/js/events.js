@@ -146,13 +146,13 @@ G.Ev = (() => {
     meter: (k) => !!k.doneFlag,
     job: (k) => !!k.doneFlag,
     pumpFix: (k, s) => !s.pumps[k.ref].broken,
-    restart: (k, s) => (!G.Sim.heatSeason(s.t) || s.heat.q > 0.5) && s.gvs.q > 0.3,
+    restart: (k, s) => (!G.Sim.heatSeason(s.t) || G.Sim.qn(s, 'heat') > 0.5) && G.Sim.qn(s, 'gvs') > 0.3,
     burst: (k, s) => !s.ev.burst || s.ev.burst.called !== null,
     heatOff: (k, s) => !G.Sim.anyOn(s, 'heat'),
     pressTest: (k, s) => (s.heat.pressOkAt || -1) >= k.created,
     pumpRev: (k, s) => (s.pumps[k.ref].serviced || -1) >= k.created,
     readiness: (k, s) => readinessIssues(s).length === 0,
-    heatStart: (k, s) => s.heat.q > 0.5 && s.heat.t1 > 38,
+    heatStart: (k, s) => G.Sim.qn(s, 'heat') > 0.5 && s.heat.t1 > 38,
     wellOpen: (k, s) => G.Sim.wellOpen(s, k.ref, k.circ),
     wellRev: (k, s) => s.wells.every((w, i) => s.upg.ballv[i] || w.revAt > (k.from === undefined ? k.created : k.from)), // шаровым кранам ревизия не нужна
   };
@@ -169,7 +169,7 @@ G.Ev = (() => {
     const s = G.S;
     const rw = REWARD[o.type] || [10, 1];
     const k = Object.assign({ id: s.nextId++, created: s.t, done: false, failed: false, goodSince: null,
-      xp: rw[0], trust: rw[1], money: 0, excuse: !!(s.ev.netDrop || s.ev.hvs || s.ev.power) }, o);
+      xp: rw[0], trust: rw[1], money: 0, excuse: !!(s.ev.netDrop || s.ev.netLowP || s.ev.hvs || s.ev.power) }, o);
     s.tasks.push(k);
     if (G.UI) G.UI.dirty = true;
     return k;
@@ -350,8 +350,8 @@ G.Ev = (() => {
     const v = U.pick(vs);
     v.flange = 2;
     trust(-3);
-    alarm('Давление в отоплении ' + s.heat.ps.toFixed(1) + ' бар — сорвало прокладку на фланце задвижки ' + v.id + '! Закрой подпитку!');
-    addTask({ type: 'fixGland', ref: s.valves.indexOf(v), title: 'Сменить прокладки ' + v.id, desc: 'После перепрессовки течёт фланец задвижки ' + v.id + '.', deadline: s.t + 1440 });
+    alarm('Давление в отоплении ' + s.heat.ps.toFixed(1) + ' бар — предохранительный клапан не сработал, сорвало прокладку на фланце задвижки ' + v.id + '! Сбрось давление дренажом!');
+    addTask({ type: 'fixGland', ref: s.valves.indexOf(v), title: 'Сменить прокладки ' + v.id, desc: 'После перепрессовки (закис ППК) течёт фланец задвижки ' + v.id + '.', deadline: s.t + 1440 });
   }
 
   function passOut() {
@@ -536,8 +536,9 @@ G.Ev = (() => {
       if (!openTask('restart')) addTask({ type: 'restart', title: 'Запустить насосы после отключения', desc: 'После отключения света насосы сами не запускаются.', deadline: t + 120, excuse: false });
     }
     if (E.hvs && t >= E.hvs.until) { E.hvs = null; msg(ODS, 'Водоканал подал холодную воду, ГВС восстанавливается.'); }
+    if (E.netLowP && t >= E.netLowP.until) { E.netLowP = null; msg('Теплосеть', 'Давление в обратной магистрали восстановлено — подпитка отопления из сети снова идёт.'); }
     if (E.netOff) {
-      if (!E.netOff.started && t >= E.netOff.from) { E.netOff.started = true; msg('Теплосеть', 'Начались испытания магистрали — горячей воды в квартале нет 10 дней. Жильцы в курсе.', true); }
+      if (!E.netOff.started && t >= E.netOff.from) { E.netOff.started = true; msg('Теплосеть', 'Начались испытания магистрали — горячей воды в квартале нет 10 дней, подпитки отопления из сети тоже. Жильцы в курсе.', true); }
       if (t >= E.netOff.until) { E.netOff = null; s.flags.hotGrace = t + 150; msg('Теплосеть', 'Испытания окончены, сетевую воду дали. Проверь ГВС: насос, задвижки, температура.', true); }
     }
     if (E.burst) {
@@ -682,7 +683,12 @@ G.Ev = (() => {
     }
     if (!E.hvs && per(0.012)) {
       E.hvs = { until: t + U.rint(120, 360) };
-      msg(ODS, 'Водоканал отключил холодную воду в квартале — горячей тоже не будет. Подпитка отопления невозможна.', true);
+      msg(ODS, 'Водоканал отключил холодную воду в квартале — горячей тоже не будет: ВВП греть нечего. Отопление не трогает — оно подпитывается из теплосети.', true);
+    }
+    // падение давления в обратке теплосети: подпитать отопление нечем, пока не поднимут
+    if (!E.netLowP && !(E.netOff && E.netOff.started) && per(0.015 * rk)) {
+      E.netLowP = { until: t + U.rint(180, 480), p: Math.round(U.rnd(2.6, 3.4) * 10) / 10 };
+      msg('Теплосеть', 'Упало давление в обратной магистрали — ' + E.netLowP.p.toFixed(1) + ' бар (ремонт на насосной). Подпитка отопления из сети выше этого не пойдёт несколько часов — береги воду в контуре, течи не допускай.', true);
     }
     // порыв на вводе в дом: отопление — только в сезон, ГВС — круглый год (кроме летнего отключения)
     // во время обучения ГВС не рвётся — первая замена Зд5 и так на ГВС

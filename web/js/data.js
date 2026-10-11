@@ -49,12 +49,13 @@ G.D = (() => {
 
   const SKLAD_LIMIT = 30000; // лимит склада на месяц, ₽
 
+  // kw — расчётная теплопотеря при −26° (кВт), tau — тепловая инерция (ч), rad — запас радиаторов к расчёту
   const HOUSES = [
-    { id: 1, name: 'Дом №1', floors: 5, x: 960, w: 230, kLoss: 1.04, dist: 0.99, apts: 80, style: 'brick', mine: true },
-    { id: 2, name: 'Дом №2', floors: 9, x: 1260, w: 240, kLoss: 1.0, dist: 0.96, apts: 144, style: 'panel' },
-    { id: 3, name: 'Дом №3', floors: 9, x: 1570, w: 240, kLoss: 1.02, dist: 0.94, apts: 144, style: 'panel2' },
-    { id: 4, name: 'Дом №4', floors: 12, x: 1880, w: 240, kLoss: 0.93, dist: 0.93, apts: 192, style: 'new' },
-    { id: 5, name: 'Дом №5', floors: 5, x: 2190, w: 230, kLoss: 1.06, dist: 0.91, apts: 80, style: 'brick2' },
+    { id: 1, name: 'Дом №1', floors: 5, x: 960, w: 230, kw: 420, tau: 34, rad: 1.1, apts: 80, style: 'brick', mine: true },
+    { id: 2, name: 'Дом №2', floors: 9, x: 1260, w: 240, kw: 700, tau: 30, rad: 1.1, apts: 144, style: 'panel' },
+    { id: 3, name: 'Дом №3', floors: 9, x: 1570, w: 240, kw: 720, tau: 30, rad: 1.1, apts: 144, style: 'panel2' },
+    { id: 4, name: 'Дом №4', floors: 12, x: 1880, w: 240, kw: 800, tau: 44, rad: 1.14, apts: 192, style: 'new' },
+    { id: 5, name: 'Дом №5', floors: 5, x: 2190, w: 230, kw: 440, tau: 34, rad: 1.1, apts: 80, style: 'brick2' },
   ];
 
   const PLACES = {

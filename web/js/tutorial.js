@@ -66,7 +66,7 @@ G.Tut = (() => {
       world: (s) => (s.gvs.drain ? at('drain:gvs') : !s.valves[4].open ? at('valve:4') : at('valve:5')),
       done: (s) => !s.gvs.drain && s.valves[4].open && s.valves[5].open },
     { id: 'r_start', text: 'Шаг 6 из 6. Запусти насос <b>Н3</b> — циркуляция пошла, у жильцов снова горячая вода!',
-      world: () => at('pump:2'), done: (s) => s.gvs.q > 0.3 && s.gvs.ps > 3 },
+      world: () => at('pump:2'), done: (s) => G.Sim.qn(s, 'gvs') > 0.3 && s.gvs.ps > 3 },
     { id: 'fin', text: 'Обучение пройдено! Шпаргалка: «Шкаф» — чек-лист пуска, «≡» — всё оборудование, «Обход» — каждый рабочий день. Удачи, слесарь!',
       ack: 'Удачи!', done: (s) => s.tut.flags.ack_fin },
   ];

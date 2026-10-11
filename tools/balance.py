@@ -34,10 +34,15 @@ BOT = """
   if (!s.ev.burst) s.wells.forEach(w => w.v.forEach(v => { v.open = true; v.stuck = false; v.broken = false; }));
   if (s.tasks.some(k => k.type === 'wellRev' && !k.done && !k.failed)) s.wells.forEach(w => { w.revAt = s.t; });
   const tins = s.houses.map(x => x.tin);
-  if (U.mod(s.t) % 180 === 0) { if (Math.min(...tins) < 19.8 && H.corr < 12) H.corr += 1; else if (Math.max(...tins) > 24.5 && H.corr > -12) H.corr -= 1; }
-  return Math.min(...tins);
+  // график: холодный дом — вверх, перетоп выше 23° — вниз (раз в 3 ч, как погодный контроллер)
+  if (U.mod(s.t) % 180 === 0) { if (Math.min(...tins) < 20 && H.corr < 15) H.corr += 1; else if (Math.max(...tins) > 23 && H.corr > -15) H.corr -= 1; }
+  return [Math.min(...tins), Math.max(...tins)];
 })()
 """
+
+
+def G_SEASON(page):
+    return page.evaluate("G.Sim.heatSeason(G.S.t) && G.S.t >= (G.S.flags.coldGrace || 0)")
 
 
 def main():
@@ -50,18 +55,21 @@ def main():
         page.goto(URL)
         page.wait_for_timeout(300)
         page.evaluate("G.Main.startNew(); G.UI.closeOverlay(); G.Tut.skip(); G.UI.toast=()=>{}; G.S.speed=0; window.cnt={}; G.UI.onMessage=(f,t)=>{ const k=f.split(',')[0]+': '+t.slice(0,50); cnt[k]=(cnt[k]||0)+1; }; 0")
-        mins = []
+        mins, maxs = [], []
         for d in range(days):
-            lo = 99
+            lo, hi = 99, -99
             for hh in range(24):
-                lo = min(lo, page.evaluate(BOT))
+                r = page.evaluate(BOT)
+                if G_SEASON(page):
+                    lo, hi = min(lo, r[0]), max(hi, r[1])
                 page.evaluate("G.Main.advance(60)")
             mins.append(lo)
+            maxs.append(hi)
             if d % 15 == 0 or d == days - 1:
                 r = page.evaluate("""(() => { const s=G.S; return [G.U.dateStr(s.t), s.tout.toFixed(0), s.heat.t1.toFixed(0), s.heat.corr, s.gvs.t3.toFixed(0),
                   s.houses.map(h=>h.tin.toFixed(1)+'/'+Math.round(h.sat)).join(' '), 'trust', s.p.trust.toFixed(0), 'money', s.p.money, 'compl', s.stats.complaints,
                   'fail', s.stats.tasksFailed, s.over] })()""")
-                print(d, r, 'minTin', round(lo, 1))
+                print(d, r, 'minTin', round(lo, 1), 'maxTin', round(hi, 1))
             if page.evaluate("!!G.S.over"):
                 print('GAME OVER at day', d)
                 break
@@ -71,6 +79,7 @@ def main():
             for k, v in sorted(page.evaluate("cnt").items(), key=lambda x: -x[1]):
                 if os.environ.get('MSGS') not in k and os.environ.get('MSGS') != '1': continue
                 print(v, k)
+        print('season minTin', round(min(mins), 1), 'maxTin', round(max(maxs), 1))
         print('errors:', errs)
         b.close()
 
