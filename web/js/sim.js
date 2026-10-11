@@ -22,11 +22,11 @@ G.Sim = (() => {
   const LMTD_N = 25 / Math.log(75 / 50);
   const Q_INT = 0.07; // бытовые теплопоступления, доля от расчётной теплопотери
   // ---- ТО отопления (пластинчатый, противоток) и сетевая вода
-  const UA_HX = 220, GN_MAX = 60; // кВт/К; потолок расхода сетевой воды на ТО, м³/ч
+  const UA_HX = 220, GN_MAX = 40; // кВт/К; потолок расхода сетевой воды на ТО, м³/ч
   const P_NET_S = 8, P_NET_R = 5.2; // давление в подаче и обратке теплосети, бар
   // ---- давление: закрытый контур V_SYS, мембранный бак V_TANK (азот P_PRE), под ним — упругость труб
-  const V_SYS = 30, V_TANK = 8, P_PRE = 2, W_PIPE = 0.3;
-  const KF = 3, KD = 10; // подпитка из обратки сети и дренаж: Q = K·√ΔP, м³/ч
+  const V_SYS = 30, V_TANK = 12, P_PRE = 2, W_PIPE = 0.3;
+  const KF = 4, KD = 10; // подпитка из обратки сети и дренаж: Q = K·√ΔP, м³/ч
   const P_PPK = 6; // предохранительный клапан
   // ---- ГВС: двухступенчатый ВВП, циркуляция Т4, разбор жильцами
   const H0_G = 0.8, A_G = 0.012;
@@ -91,8 +91,9 @@ G.Sim = (() => {
     return sum;
   };
   const circPumps = (S, c) => S.pumps.filter((p) => p.circ === c);
-  // пороги давления отопления (статика, бар): норма P_LOW..P_HIGH, подпитку закрывать с P_CLOSE
-  const P_LOW = 3.5, P_CLOSE = 4, P_WARN = 4.6, P_HIGH = 5;
+  // пороги давления отопления, бар «на холодную» (pCold): норма P_LOW..P_WARN, подпитку закрывать с P_CLOSE,
+  // много — выше P_HIGH на холодную или P_HOT по манометру
+  const P_LOW = 3.5, P_CLOSE = 4, P_WARN = 4.5, P_HIGH = 4.6, P_HOT = 5.7;
   // тепловые камеры перед домами: открыто ли ответвление контура c ('heat' | 'gvs') на дом i
   const wellOpen = (S, i, c) => D.WELL_PIPES[c].every((k) => S.wells[i].v[k].open);
   // доля порыва, которая ещё течёт: обе задвижки открыты — 1, одна закрыта — подсос с другой трубы, обе — 0
@@ -104,23 +105,40 @@ G.Sim = (() => {
   };
   const burstIsolated = (S) => !!S.ev.burst && burstLeakK(S) === 0;
   // все утечки отопления, м³/ч при текущем давлении: ЦТП, подвалы домов, порыв теплотрассы
-  const heatLeak = (S) => {
+  const heatLeak = (S, p = S.heat.ps) => {
     let leak = leakOf(S, 'heat');
     S.houses.forEach((h, i) => { if (h.leak && wellOpen(S, i, 'heat')) leak += 0.06; });
     if (S.ev.burst && S.ev.burst.pipe === 'heat') leak += 3 * burstLeakK(S);
-    return leak * Math.sqrt(Math.max(0, S.heat.ps) / 4);
+    return leak * Math.sqrt(Math.max(0, p) / 4);
   };
   // ---- давление ↔ объём: w — вода в баке сверх пустого (м³), ниже нуля — бак пуст, давление держат трубы
   const volOf = (p) => (p >= P_PRE ? V_TANK * (1 - (P_PRE + 1) / (p + 1)) : W_PIPE * (Math.max(0, p) / P_PRE - 1));
   const presOf = (w) => (w >= 0 ? (P_PRE + 1) * V_TANK / (V_TANK - Math.min(w, 0.95 * V_TANK)) - 1 : Math.max(0, P_PRE * (1 + w / W_PIPE)));
   const dPdV = (p) => (p >= P_PRE ? (p + 1) * (p + 1) / ((P_PRE + 1) * V_TANK) : P_PRE / W_PIPE); // бар на м³
+  // объём, на который контур «сожмётся», если остынет до 20°, м³ (≤ 0 у горячего)
+  const shrink = (H) => V_SYS * (rho((H.t1 + H.t2) / 2) / rho(20) - 1);
+  // давление, приведённое к холодному контуру (20°): по нему и судят, сколько воды в системе
+  const pCold = (S) => presOf(volOf(S.heat.ps) + shrink(S.heat));
+  // и обратно: что покажет манометр сейчас, если на холодную будет pc
+  const pAt = (S, pc) => presOf(volOf(pc) - shrink(S.heat));
   // давление в обратке теплосети: подпитка идёт, только пока оно выше давления контура
   const pNetRet = (S) => (S.ev.netOff && S.ev.netOff.started ? 0 : S.ev.netLowP ? S.ev.netLowP.p : P_NET_R);
   const feedFlow = (S, p) => KF * Math.sqrt(Math.max(0, pNetRet(S) - p));
+  // приток в контур при открытой подпитке за вычетом течей и дренажа, м³/ч при давлении p
+  const feedNet = (S, p) => feedFlow(S, p) - heatLeak(S, p) - (S.heat.drain ? KD * Math.sqrt(Math.max(0, p)) : 0);
   // чистое изменение давления отопления при открытой подпитке, бар/мин
-  const feedNetRate = (S) => {
-    const p = S.heat.ps;
-    return (feedFlow(S, p) - heatLeak(S) - (S.heat.drain ? KD * Math.sqrt(Math.max(0, p)) : 0)) / 60 * dPdV(p);
+  const feedNetRate = (S) => feedNet(S, S.heat.ps) / 60 * dPdV(S.heat.ps);
+  // сколько минут подпитывать до pTo бар на холодную (по модели бака, при нынешних температурах); Infinity — не наберётся
+  const feedEta = (S, pTo) => {
+    let w = volOf(S.heat.ps), t = 0;
+    const wt = volOf(pTo) - shrink(S.heat), dw = (wt - w) / 40;
+    if (dw <= 0) return 0;
+    for (let k = 0; k < 40; k++, w += dw) {
+      const r = feedNet(S, presOf(w + dw / 2)) / 60;
+      if (r <= 1e-4) return Infinity;
+      t += dw / r;
+    }
+    return t;
   };
   const anyOn = (S, c) => S.pumps.some((p) => p.circ === c && p.on);
   // потолок нагрева: Т1 / Т3 при полностью открытом клапане сетевой воды (считается в шаге)
@@ -139,8 +157,8 @@ G.Sim = (() => {
     else { const x = Math.exp(-ntu * (1 - Cr)); e = (1 - x) / (1 - Cr * x); }
     return e * Cmin * (th - tc);
   }
-  // запас поверхности после накипи: 100% накипи — 40% теплопередачи
-  const foulK = (f) => 1 - 0.006 * f;
+  // запас поверхности после накипи: ТО отопления при 100% — 30% теплопередачи, ВВП (жёсткая водопроводная вода в трубках) — 15%
+  const foulK = (c, f) => 1 - (c === 'gvs' ? 0.0085 : 0.007) * f;
 
   function weather(S, t) {
     const m = U.mod(t);
@@ -230,9 +248,9 @@ G.Sim = (() => {
     H.t2 += ((flowing && sq > 0 ? st / sq : 22) - H.t2) * kf;
 
     // ТО: регулятор на сетевой стороне держит Т1 по графику + коррекция, клапан не больше GN_MAX
-    const ua = UA_HX * foulK(H.foul), Cc = CW * H.q, tset = tSched(S.tout) + H.corr;
+    const ua = UA_HX * foulK('heat', H.foul), Cc = CW * H.q, tset = tSched(S.tout) + H.corr;
     let gn = 0, qh = 0;
-    H.tmax = H.t2;
+    H.tmax = undefined; // нет циркуляции или не сезон — потолок по подаче сети (maxT)
     if (season && flowing && S.tnet > H.t2) {
       const qmax = hx(ua, CW * GN_MAX, Cc, S.tnet, H.t2), qreq = Cc * (tset - H.t2);
       H.tmax = H.t2 + qmax / Cc;
@@ -251,17 +269,24 @@ G.Sim = (() => {
     w += V_SYS * (rho(tm0) / rho((H.t1 + H.t2) / 2) - 1);
     w -= heatLeak(S) / 60;
     if (H.drain) w -= KD * Math.sqrt(Math.max(0, H.ps)) / 60;
-    if (H.auto) { if (H.ps < 3.8) H.autoOn = true; else if (H.ps > 4.2) H.autoOn = false; }
+    const pc0 = pCold(S);
+    if (H.auto) { if (pc0 < 3.8) H.autoOn = true; else if (pc0 > 4.2) H.autoOn = false; }
     const feeding = H.feed || (H.auto && H.autoOn);
     H.qf = feeding ? feedFlow(S, H.ps) : 0;
     w += H.qf / 60;
+    // забытая подпитка: контур перекачан дольше получаса — ППК подтравливает сетевую воду в трап
+    H.overMin = H.feed && pc0 > P_HIGH ? (H.overMin || 0) + 1 : 0;
+    H.qw = H.overMin > 30 ? 1 : 0;
+    if (H.overMin === 31) G.Ev.msg('Мысли', 'Подпитка так и открыта, контур перекачан (на холодную ' + pc0.toFixed(1) + ' бар) — предохранительный клапан подтравливает сетевую воду в трап. Лужа, а ТЭЦ воду считает! Закрой подпитку.');
+    w -= H.qw / 60;
     let p = presOf(w);
-    if (H.feed && p > P_WARN && !H.feedWarn) {
+    const pc = presOf(w + shrink(H));
+    if (H.feed && pc > P_WARN && !H.feedWarn) {
       H.feedWarn = true;
       if (S.speed > 1) S.speed = 1;
-      G.Ev.msg('Мысли', 'Манометр отопления ' + p.toFixed(1) + ' бар — пора закрывать подпитку!');
+      G.Ev.msg('Мысли', 'Манометр отопления ' + p.toFixed(1) + ' бар' + (p - pc > 0.2 ? ', на холодную было бы ' + pc.toFixed(1) : '') + ' — пора закрывать подпитку!');
     }
-    if (!H.feed || p < P_CLOSE) H.feedWarn = false;
+    if (!H.feed || pc < P_CLOSE) H.feedWarn = false;
     // ППК: сбрасывает лишнее в трап; изредка закисает — тогда давление растёт дальше
     if (p > P_PPK) {
       if (!H.ppkOn) {
@@ -271,7 +296,8 @@ G.Sim = (() => {
         if (H.ppkStuck) G.Ev.alarm('Давление в отоплении ' + p.toFixed(1) + ' бар, а предохранительный клапан молчит — закис! Сбрось давление дренажом, иначе сорвёт прокладки!');
         else G.Ev.msg('Мысли', 'Зашипел предохранительный клапан отопления: ' + P_PPK + ' бар, вода уходит в трап.' + (feeding ? ' Подпитка-то открыта!' : ' Вода прогрелась и расширилась — приоткрой дренаж.'));
       }
-      if (!H.ppkStuck) { H.qppk = (w - volOf(P_PPK)) * 60; p = P_PPK; } // сброс, м³/ч
+      H.qppk = H.ppkStuck ? 0 : (w - volOf(P_PPK)) * 60; // сброс, м³/ч
+      if (!H.ppkStuck) p = P_PPK;
     } else H.qppk = 0;
     if (p < 5.6) H.ppkOn = false;
     if (p < 5) H.ppkStuck = false;
@@ -305,11 +331,13 @@ G.Sim = (() => {
     }
     // SMS-датчик давления: раньше диспетчера, будит и снимает ускорение
     // слив через дренаж — сам сливаешь: молчит, пока давление снова не наберётся
-    if (S.upg.sms && H.ps < 3 && !H.smsSent && (season || anyOn(S, 'heat'))) {
+    // контур слит игроком (дренаж) или сезон ещё не начат приказом, а насосы стоят — тревогу не поднимают
+    const watch = anyOn(S, 'heat') || (season && !S.flags.seasonEnd && !H.drain);
+    if (S.upg.sms && H.ps < 3 && !H.smsSent && watch) {
       H.smsSent = true;
       if (!H.drain) G.Ev.msg('SMS-датчик ЦТП-7', 'Давление в отоплении ' + H.ps.toFixed(1) + ' бар!', true);
     } else if (H.ps > 3.5) H.smsSent = false;
-    if (H.ps < 2 && !H.lowAlarm && (season || anyOn(S, 'heat'))) {
+    if (H.ps < 2 && !H.lowAlarm && watch) {
       H.lowAlarm = true;
       G.Ev.alarm('Падение давления в отоплении: ' + H.ps.toFixed(1) + ' бар! Нужна подпитка.');
     } else if (H.ps > 3) H.lowAlarm = false;
@@ -347,11 +375,12 @@ G.Sim = (() => {
     const gw = dr + W.q;
     const tcIn = gw > 0 ? (dr * S.thvs + W.q * W.t4) / gw : S.thvs;
     // ВВП: 1-я ступень — обратка ТО отопления + сетевая вода после 2-й ступени, 2-я — подача сети
-    const f = foulK(W.foul), Cw = CW * gw, gn = H.gn || 0, tg2 = W.tg2 === undefined ? S.tnet - 20 : W.tg2;
+    const f = foulK('gvs', W.foul), Cw = CW * gw, gn = H.gn || 0, tg2 = W.tg2 === undefined ? S.tnet - 20 : W.tg2;
     let q1 = 0, q2 = 0, tret = gn > 0 ? H.trh : 40;
     const run = (gg) => {
       const gh = gn + gg, th1 = gh > 0 ? (gn * H.trh + gg * tg2) / gh : 0;
-      q1 = gh > 0 ? hx(UA1 * f, CW * gh, Cw, th1, tcIn) : 0;
+      // перемычка: 1-я ступень не греет выше уставки
+      q1 = gh > 0 ? Math.min(hx(UA1 * f, CW * gh, Cw, th1, tcIn), Math.max(0, Cw * (W.set - tcIn))) : 0;
       const tc1 = tcIn + q1 / Cw;
       q2 = gg > 0 ? hx(UA2 * f, CW * gg, Cw, S.tnet, tc1) : 0;
       tret = gh > 0 ? th1 - q1 / (CW * gh) : 40;
@@ -368,7 +397,7 @@ G.Sim = (() => {
       } else gg = GG_MAX;
       W.tg2 = S.tnet - q2 / (CW * gg);
     } else { W.tmax = S.tnet - 5; if (gn > 0) run(0); }
-    W.gn = gg; W.kw = q1 + q2;
+    W.gn = gg; W.kw = q1 + q2; W.kw1 = q1;
     S.trn = tret; // обратка в сеть, на ТЭЦ
     const kg = hasWater && gw > 0.05 ? 1 - Math.exp(-gw / 60 / V_VVP) : 0.01;
     W.t3 += ((hasWater && gw > 0.05 ? t3 : 20) - W.t3) * kg;
@@ -498,13 +527,13 @@ G.Sim = (() => {
     if (season) S.heat.clog = Math.min(100, S.heat.clog + 0.0011 * (qn(S, 'heat') > 0.1 ? 1 : 0) * (S.upg.magnet ? 0.5 : 1));
     S.heat.foul = Math.min(100, S.heat.foul + (season ? 0.0002 : 0));
     S.gvs.foul = Math.min(100, S.gvs.foul + 0.00038);
-    const inLeak = leakOf(S, 'heat') + leakOf(S, 'gvs');
+    const inLeak = leakOf(S, 'heat') + leakOf(S, 'gvs') + (S.heat.qppk || 0) + (S.heat.qw || 0); // ППК сбрасывает в трап
     S.flood = U.clamp(S.flood + inLeak * 8 / 60 - 1.2 / 60, 0, 100);
     needs(S, busy);
     G.Ev.tick(S, season);
   }
 
-  return { step, houseLevel, netReturn, heatLeak, maxT, wellOpen, burstLeakK, burstIsolated, feedNetRate, feedFlow, pNetRet, clogCut, filterDp, qn,
-    P_LOW, P_CLOSE, P_WARN, P_HIGH, P_PPK, P_NET_S, P_NET_R, Q_NOM, GC_NOM, GN_MAX, GG_MAX, CW, GCAL,
+  return { step, houseLevel, netReturn, heatLeak, maxT, wellOpen, burstLeakK, burstIsolated, feedNetRate, feedEta, feedFlow, pNetRet, pCold, pAt, foulK, clogCut, filterDp, qn,
+    P_LOW, P_CLOSE, P_WARN, P_HIGH, P_HOT, P_PPK, P_NET_S, P_NET_R, Q_NOM, GC_NOM, GN_MAX, GG_MAX, CW, GCAL,
     seasonal, heatSeason, tSched, drawProfile, pumpEff, headOf, pipeOpen, leakOf, sealLeak, valveLeak, flangeLeak, circPumps, anyOn, GLAND };
 })();

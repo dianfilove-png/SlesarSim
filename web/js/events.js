@@ -97,7 +97,7 @@ G.Ev = (() => {
   // дома с перекрытым вводом не считает; насосы стоят или давления нет — график не трогает
   function weatherCtl(s) {
     const H = s.heat, Sm = G.Sim;
-    if (!Sm.anyOn(s, 'heat') || H.ps < Sm.P_LOW) return;
+    if (!Sm.anyOn(s, 'heat') || Sm.pCold(s) < Sm.P_LOW) return;
     const tins = s.houses.filter((x, i) => Sm.wellOpen(s, i, 'heat')).map((x) => x.tin);
     if (!tins.length) return;
     const lo = Math.min(...tins), hi = Math.max(...tins);
@@ -146,13 +146,14 @@ G.Ev = (() => {
     meter: (k) => !!k.doneFlag,
     job: (k) => !!k.doneFlag,
     pumpFix: (k, s) => !s.pumps[k.ref].broken,
-    restart: (k, s) => (!G.Sim.heatSeason(s.t) || G.Sim.qn(s, 'heat') > 0.5) && G.Sim.qn(s, 'gvs') > 0.3,
+    // контур пошёл: >10 м³/ч — и при одном открытом доме, и при грязном грязевике
+    restart: (k, s) => (!G.Sim.heatSeason(s.t) || s.heat.q > 10) && G.Sim.qn(s, 'gvs') > 0.3,
     burst: (k, s) => !s.ev.burst || s.ev.burst.called !== null,
     heatOff: (k, s) => !G.Sim.anyOn(s, 'heat'),
     pressTest: (k, s) => (s.heat.pressOkAt || -1) >= k.created,
     pumpRev: (k, s) => (s.pumps[k.ref].serviced || -1) >= k.created,
     readiness: (k, s) => readinessIssues(s).length === 0,
-    heatStart: (k, s) => G.Sim.qn(s, 'heat') > 0.5 && s.heat.t1 > 38,
+    heatStart: (k, s) => s.heat.q > 10 && s.heat.t1 > 38,
     wellOpen: (k, s) => G.Sim.wellOpen(s, k.ref, k.circ),
     wellRev: (k, s) => s.wells.every((w, i) => s.upg.ballv[i] || w.revAt > (k.from === undefined ? k.created : k.from)), // шаровым кранам ревизия не нужна
   };
@@ -323,7 +324,7 @@ G.Ev = (() => {
     if (s.t % 60 === 0) { hs.tinH0 = hs.tinH === undefined ? hs.tin : hs.tinH; hs.tinH = hs.tin; }
     const warming = hs.tinH0 !== undefined && hs.tin - hs.tinH0 >= 0.1;
     if (hs.tin >= 20) L.coolUp = s.t; // снова тепло — следующее похолодание ОДС заметит заново
-    if (chill && hs.tin < 19.5 && hs.tin >= 18 && (L.coolUp || 0) > (L.cool || -1) && s.t - (L.cool || -1e9) >= 1440 && !openTask('heat', i)) {
+    if (chill && G.Sim.wellOpen(s, i, 'heat') && hs.tin < 19.5 && hs.tin >= 18 && (L.coolUp || 0) > (L.cool || -1) && s.t - (L.cool || -1e9) >= 1440 && !openTask('heat', i)) {
       L.cool = s.t;
       msg(ODS, 'В доме №' + D.HOUSES[i].id + ' прохладно, ' + U.deg1(hs.tin) + '. Пока не звонят, но скоро начнут — подними график или проверь ввод.');
     }

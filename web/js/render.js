@@ -500,7 +500,7 @@ G.R = (() => {
     rect(x - 1.5, y + 14, 3, 12, '#444');
     rr(x + 17, y - 17, 58, 32, 4); ctx.fillStyle = 'rgba(10,14,20,.85)'; ctx.fill();
     text(U.deg(t) + 'C', x + 46, y - 8, 12, t > 50 ? '#ffb199' : '#9fd0ff', 'center', true, false);
-    text(p.toFixed(1) + ' бар', x + 46, y + 7, 11, p > 8 || p < 2 ? '#ff6b5b' : '#e8f0ff', 'center', true, false);
+    text(p.toFixed(1) + ' бар', x + 46, y + 7, 11, p > 9 || p < 2 ? '#ff6b5b' : '#e8f0ff', 'center', true, false);
     addHit('gauge:' + pipe, x - 18, y - 20, 100, 44);
   }
   function drawHX(x, y0, y1, label, foul, id) {
@@ -668,6 +668,9 @@ G.R = (() => {
     // подпитка, дренажи
     smallValve(CT.feedX, 292, H.feed || (H.auto && H.autoOn), '', 'feed', true);
     text(H.auto ? 'Подпитка (авто)' : 'Подпитка из сети', CT.feedX + 14, 292, 11, '#fff', 'left', true);
+    // статика (бак у насосов) — по ней подпитывают, манометры Т1/Т2 показывают её плюс напор
+    const pc = G.Sim.pCold(s);
+    text('статика ' + H.ps.toFixed(1) + ' бар', CT.feedX + 16, 306, 10, pc < G.Sim.P_LOW || pc > G.Sim.P_HIGH ? '#ffb070' : '#cfe3ff', 'left', true, false);
     if (H.auto) { rr(CT.feedX - 14, 300, 28, 16, 3); ctx.fillStyle = '#c9a227'; ctx.fill(); text('РД', CT.feedX, 308, 9, '#222', 'center', true, false); }
     const dx = CT.dx;
     ctx.strokeStyle = '#2b2f35'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(dx, 252); ctx.bezierCurveTo(dx + 30, 300, dx + 20, 420, dx, 500); ctx.stroke();

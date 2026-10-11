@@ -221,9 +221,10 @@ G.Act = (() => {
     const H = G.S.heat;
     busy((H.feed ? 'Закрываю' : 'Открываю') + ' подпитку', 1, {}, () => {
       H.feed = !H.feed;
-      const pn = Sim.pNetRet(G.S);
+      const pn = Sim.pNetRet(G.S), pTo = Sim.pAt(G.S, Sim.P_CLOSE), hot = pTo - Sim.P_CLOSE > 0.15;
       if (H.feed && pn <= H.ps) toast('Кран открыт, но вода не идёт: в обратке теплосети ' + pn.toFixed(1) + ' бар — не выше, чем в контуре.', 'bad');
-      else toast(H.feed ? 'Подпитка из обратки теплосети открыта. Следи за манометром, на ~4 бар закрывай!' : 'Подпитка закрыта');
+      else if (H.feed && Sim.pCold(G.S) < Sim.P_CLOSE && pn <= pTo + 0.05) toast('Подпитка открыта, но в обратке сети ' + pn.toFixed(1) + ' бар — выше не подпитать, до нормы не дойдёт.', 'bad');
+      else toast(H.feed ? 'Подпитка из обратки теплосети открыта. Закрывай на ~' + Sim.P_CLOSE + ' бар на холодную' + (hot ? ' (сейчас контур горячий — манометр ≈' + pTo.toFixed(1) + ')' : '') + '!' : 'Подпитка закрыта');
     });
   }
   function corr(d) { const H = G.S.heat; H.corr = U.clamp(H.corr + d, -15, 15); G.UI.reopen(); }
@@ -277,7 +278,7 @@ G.Act = (() => {
     const cl = s.valves.filter((v) => v.pipe <= 2 && !v.open);
     if (cl.length) r.push('открыть ' + cl.map((v) => v.id).join(', '));
     if (H.drain) r.push('закрыть дренаж отопления');
-    if (H.ps < 3) r.push('заполнить систему подпиткой (сейчас ' + H.ps.toFixed(1) + ' бар)');
+    if (H.ps < 3) r.push(s.ev.netOff && s.ev.netOff.started ? 'контур пуст, подпитать нечем — испытания магистрали' : 'заполнить систему подпиткой (сейчас ' + H.ps.toFixed(1) + ' бар)');
     return r;
   }
   function pressTest() {
