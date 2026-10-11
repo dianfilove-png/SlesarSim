@@ -189,6 +189,9 @@ G.Ev = (() => {
       xp: rw[0], trust: rw[1], money: 0, excuse: !!(s.ev.netDrop || s.ev.netLowP || s.ev.hvs || s.ev.power) }, o);
     s.tasks.push(k);
     if (dutyMich(s) && MICH_TYPES.includes(k.type)) k.mich = s.t + michDelay(k);
+    // дежурил сам: сутки с настоящей аварийной заявкой оплачиваются полностью
+    const E = s.ev.duty;
+    if (E.cur === 'self' && DUTY_EMERG.includes(k.type) && !(E.em || []).includes(U.day(s.t))) E.em = (E.em || []).concat(U.day(s.t));
     if (G.UI) G.UI.dirty = true;
     return k;
   }
@@ -215,8 +218,11 @@ G.Ev = (() => {
 
 
   // ---------- дежурство в выходные (S.ev.duty): сам, подмена Михалыча или отгул
-  const DUTY_PAY = 1500, MICH_PRICE = 2500, OFF_GAP = 60; // доплата за сутки, цена подмены, отгул — раз в 2 месяца
+  // доплата за сутки с аварией / за готовность без неё; подмена — за блок до 3 суток, дальше за каждые сутки; отгул — раз в 2 месяца
+  const DUTY_PAY = 1500, DUTY_IDLE = 500, MICH_PRICE = 2500, MICH_EXTRA = 1500, OFF_GAP = 60;
   const MICH_TYPES = ['restart', 'wellOpen', 'burst', 'leak'];
+  const DUTY_EMERG = ['restart', 'burst', 'leak', 'wellOpen', 'pumpFix'];
+  const michPrice = (days) => MICH_PRICE + MICH_EXTRA * Math.max(0, days - 3);
   // выходные (и праздники) подряд, куда попадает день dd: {id — номер первого дня, days} или null
   function weekendOf(dd) {
     if (U.isWorkday(dd * 1440)) return null;
@@ -227,24 +233,28 @@ G.Ev = (() => {
   }
   const dutyMode = (s, id) => s.ev.duty.plan[id] || 'self';
   // Михалыч сейчас на посту: подмена, отгул или время «без связи»
-  const dutyMich = (s) => s.ev.duty.cur === 'mich' || s.ev.duty.cur === 'off' || s.ev.duty.away > s.t;
+  // отгул: Михалыч на посту только пока героя нет (сб 8:00 — вс 20:00), а не с нуля часов субботы
+  const dutyMich = (s) => s.ev.duty.cur === 'mich' || s.ev.duty.away > s.t;
+  // выходные сезонные, если сезон идёт в полдень и в первый, и в последний их день: 15–16 мая сезон заканчивается посреди выходных — не дежурство
+  const dutySeason = (w) => G.Sim.heatSeason(w.id * 1440 + 12 * 60) && G.Sim.heatSeason((w.id + w.days - 1) * 1440 + 12 * 60);
   // ближайшие выходные сезона: что выбрано, закреплено ли (с пятницы 17:00 — нет), можно ли отгул
   function dutyBlocks(s, n) {
     const out = [], E = s.ev.duty, now = U.day(s.t);
     for (let dd = now; dd < now + 70 && out.length < n; dd++) {
       const w = weekendOf(dd);
-      if (!w || out.some((x) => x.id === w.id) || !G.Sim.heatSeason(w.id * 1440)) continue;
+      if (!w || out.some((x) => x.id === w.id) || !dutySeason(w)) continue;
       const lock = (w.id - 1) * 1440 + 17 * 60;
       const sat = U.date(w.id * 1440).wd === 6 && w.days >= 2;
       const offs = Object.keys(E.plan).filter((k) => E.plan[k] === 'off' && Number(k) !== w.id);
       const gap = w.id - E.lastOff < OFF_GAP || offs.some((k) => Math.abs(Number(k) - w.id) < OFF_GAP);
-      out.push({ id: w.id, days: w.days, lock, locked: s.t >= lock, mode: dutyMode(s, w.id), off: sat && !gap, offWhy: !sat ? 'отгул — только на субботу-воскресенье' : gap ? 'отгул — раз в 2 месяца' : '' });
+      out.push({ id: w.id, days: w.days, price: michPrice(w.days), lock, locked: s.t >= lock, mode: dutyMode(s, w.id), off: sat && !gap, offWhy: !sat ? 'отгул — только на субботу-воскресенье' : gap ? 'отгул — раз в 2 месяца' : '' });
     }
     return out;
   }
   // выбор на выходные; вернёт причину отказа или ''
   function dutyPick(id, mode) {
     const s = G.S, b = dutyBlocks(s, 8).find((x) => x.id === id);
+    if (s.tut && !s.tut.done) return 'В обучении выходные не нужны — сначала закончи его';
     if (!b) return 'Такие выходные уже не выбрать';
     if (b.locked) return 'С пятницы 17:00 график закреплён';
     if (mode === 'off' && !b.off) return 'Отгул сейчас не дадут: ' + b.offWhy;
@@ -252,7 +262,8 @@ G.Ev = (() => {
     s.ev.duty.plan[id] = mode;
     return '';
   }
-  function michDelay(k) { return 120 + Math.floor(U.hash(k.id, 7) * 240); } // 2–6 часов
+  // 2–6 часов; порыв — Михалыч звонит в аварийку почти сразу: 10–25 минут
+  function michDelay(k) { return k.type === 'burst' ? 10 + Math.floor(U.hash(k.id, 7) * 15) : 120 + Math.floor(U.hash(k.id, 7) * 240); }
   // Михалыч закрывает аварийные заявки сам: без опыта, доверия и штрафов; рутину не трогает
   function michDo(s, k, quiet) {
     const E = s.ev.duty, B = s.ev.burst, hd = D.HOUSES[k.ref];
@@ -272,8 +283,15 @@ G.Ev = (() => {
       log = 'открыл задвижки в ' + TK(k.ref);
     } else if (k.type === 'burst') {
       if (B && B.called === null) B.called = s.t;
-      text = 'Михалыч вызвал аварийную бригаду на порыв у ' + hd.name.replace('Дом', 'дома') + '. Ввод не перекрывал — ждёт бригаду.';
-      log = 'вызвал аварийку на порыв у ' + hd.name.replace('Дом', 'дома') + ' (ввод не перекрывал)';
+      const dn = hd.name.replace('Дом', 'дома');
+      let shut = false;
+      if (B && B.house === k.ref && !G.Sim.wellFlooded(s, B.house)) { // в камеру можно спуститься — закрывает ввод сам, без награды
+        D.WELL_PIPES[B.pipe].forEach((n) => { const v = s.wells[B.house].v[n]; if (!v.broken && !v.stuck) Object.assign(v, { open: false, lastOp: s.t }); });
+        B.selfIso = true;
+        shut = G.Sim.burstIsolated(s);
+      }
+      text = 'Михалыч вызвал аварийную бригаду на порыв у ' + dn + (shut ? ' и спустился в камеру, закрыл ввод.' : '. Ввод не перекрывал — ждёт бригаду.');
+      log = 'вызвал аварийку на порыв у ' + dn + (shut ? ', закрыл ввод в камере' : ' (ввод не перекрывал)');
     } else {
       s.houses[k.ref].leak = 0;
       text = 'Михалыч поставил хомут на стояк в подвале ' + hd.name.replace('Дом', 'дома') + '.';
@@ -285,6 +303,7 @@ G.Ev = (() => {
     return true;
   }
   function michPass(s, force) {
+    if (!force && !dutyMich(s)) return;
     for (const k of openTasks()) {
       if (!MICH_TYPES.includes(k.type)) continue;
       if (k.mich === undefined) k.mich = s.t + michDelay(k);
@@ -293,18 +312,20 @@ G.Ev = (() => {
   }
   function dutyStart(s, w) {
     const E = s.ev.duty, P = s.p, mode = dutyMode(s, w.id);
-    Object.assign(E, { cur: mode, curId: w.id, days: w.days, log: [] });
+    Object.assign(E, { cur: mode, curId: w.id, days: w.days, log: [], em: [] });
     if (mode === 'mich') {
-      if (P.money >= MICH_PRICE) { P.money -= MICH_PRICE; msg(BOSS, 'Михалыч принял смену на выходные. Договорились на ' + U.money(MICH_PRICE) + ' из твоего кармана. Аварийное — на нём, остальное — не жди.'); }
-      else { trust(-3); msg(BOSS, 'Михалыч принял смену, а платить нечем — должен остался. Начальство в курсе (доверие −3).'); }
+      const price = michPrice(w.days);
+      if (P.money >= price) { P.money -= price; msg(BOSS, 'Михалыч принял смену на выходные. Договорились на ' + U.money(price) + ' из твоего кармана. Аварийное — на нём, остальное — не жди.'); }
+      else { P.debt = (P.debt || 0) + price; trust(-3); msg(BOSS, 'Михалыч принял смену, а платить нечем — ' + U.money(price) + ' вычтут из ближайшей зарплаты. Начальство в курсе (доверие −3).'); }
     }
   }
   function dutyEnd(s) {
     const E = s.ev.duty;
     if (E.cur === 'self') {
-      const pay = DUTY_PAY * E.days;
+      const hot = Math.min(E.days, (E.em || []).length), pay = DUTY_PAY * hot + DUTY_IDLE * (E.days - hot);
       earn(pay, 'duty');
-      msg('Бухгалтерия УК', 'Доплата за дежурство в выходные (' + E.days + ' ' + U.plural(E.days, 'сутки', 'суток', 'суток') + '): ' + U.money(pay) + '.');
+      msg('Бухгалтерия УК', 'Доплата за дежурство в выходные (' + E.days + ' ' + U.plural(E.days, 'сутки', 'суток', 'суток') + '): ' + U.money(pay) +
+        (hot ? ' — аварийных суток ' + hot + ' по ' + U.money(DUTY_PAY) + (E.days > hot ? ', остальные за готовность по ' + U.money(DUTY_IDLE) : '') : ' — за готовность, аварий не было') + '.');
     } else if (E.cur === 'mich' || E.cur === 'off') {
       michPass(s, true);
       E.sum = 'Сводка от Михалыча за выходные: ' + (E.log.length ? E.log.join('; ') + '.' : 'тихо, аварий не было.') + (E.cur === 'off' ? ' С возвращением из отгула!' : '');
@@ -316,10 +337,10 @@ G.Ev = (() => {
   function dutyTick(s, t, m) {
     const E = s.ev.duty, dd = U.day(t), w = weekendOf(dd), h = m / 60;
     if (E.cur && !(w && w.id === E.curId)) dutyEnd(s);
-    if (w && E.curId !== w.id && G.Sim.heatSeason(w.id * 1440)) dutyStart(s, w);
+    if (w && E.curId !== w.id && dutySeason(w)) dutyStart(s, w);
     if (E.cur === 'mich' || E.cur === 'off') michPass(s);
     if (E.cur === 'off' && !E.away && w && dd === w.id && h === 8) dayOffStart(s);
-    if (h === 12 && U.isWorkday(t) && !U.isWorkday(t + 1440) && G.Sim.heatSeason(t + 1440) && E.plan[dd + 1] === undefined)
+    if (h === 12 && U.isWorkday(t) && !U.isWorkday(t + 1440) && G.Sim.heatSeason(t + 1440) && E.plan[dd + 1] === undefined && !(s.tut && !s.tut.done))
       msg(BOSS, 'Завтра выходные. Кто дежурит — ты или Михалыч? Реши до 17:00: Телефон → Я → График дежурств. Не скажешь — дежуришь сам.');
     if (E.sum && U.isWorkday(t) && h === 8) { msg(BOSS, E.sum); E.sum = null; }
   }
@@ -445,7 +466,7 @@ G.Ev = (() => {
       if (!isOpen(k)) continue;
       const f = CHECK[k.type];
       if (f && f(k, s)) complete(k, s);
-      else if (k.deadline && s.t > k.deadline && k.mich === undefined) fail(k, s);
+      else if (k.deadline && s.t > k.deadline && (k.mich === undefined || !dutyMich(s))) fail(k, s);
     }
   }
 
@@ -552,6 +573,8 @@ G.Ev = (() => {
     s.tasks = s.tasks.filter((k) => !wo.includes(k) && !(B && taskIs(k, 'burst')));
     for (const k of s.tasks) if (k.deadline && !k.plan) k.deadline += mins;
     s.ev.inspect = null;
+    for (const k of s.tasks) delete k.mich; // заявка, взятая Михалычем в срок «до …», после пропуска не должна висеть вечно
+    s.heat.fedH.fill(0); // подпитка за сутки после пропуска считается заново
     // выходные, в которые вернулись из отпуска или больницы, — без доплаты и без подмены
     const E = s.ev.duty, wk = weekendOf(U.day(s.t));
     Object.assign(E, { cur: wk ? 'skip' : null, curId: wk ? wk.id : -1, away: 0, sum: null, log: [] });
@@ -603,6 +626,7 @@ G.Ev = (() => {
     // норматив, кВт: теплопотери домов на 21,5° в квартирах за вычетом бытовых + остывание магистрали (5 участков, 0,3 кВт/К) при графике
     const mean = G.Sim.tSched(tout) - 6, loss = tout >= 20 ? 0 : 5 * 0.3 * Math.max(0, mean - 5);
     const norm = (D.HOUSES.reduce((a, h) => a + Math.max(0, h.kw / 46 * (NORM_TIN - tout) - 0.07 * h.kw), 0) + loss) * g.n / 60;
+    if (norm <= 0) return null; // тёплый месяц: норматива нет
     const pct = Math.round((g.kwh / norm - 1) * 100), gc = (kwh) => (kwh / G.Sim.GCAL).toFixed(0);
     const over = pct > 10, save = pct < -5 && tin >= 20;
     let text = 'Теплосеть: за месяц взято ' + gc(g.kwh) + ' Гкал при нормативе ' + gc(norm) + ' (' + (pct >= 0 ? '+' : '−') + Math.abs(pct) + '%).';
@@ -629,6 +653,11 @@ G.Ev = (() => {
     earn(sum);
     mood(10);
     msg('Бухгалтерия УК', text, true);
+    if (P.debt > 0) { // долг Михалычу за подмену — из этой выплаты
+      P.money -= P.debt;
+      msg('Бухгалтерия УК', 'Удержано в пользу Михалыча за подмену на выходных: ' + U.money(P.debt) + '.');
+      P.debt = 0;
+    }
     if (au && au.save) earn(2000, 'gcal');
     if (dd !== 5) return;
     // квартплата — сразу с зарплаты
@@ -845,6 +874,7 @@ G.Ev = (() => {
     if (m === 10 * 60 && (d.d === 5 || d.d === 20)) payday(d.d);
     if (m >= 10 * 60 && d.m === 8 && d.d <= 5 && d.y > 2026 && s.flags.commYear !== d.y) { s.flags.commYear = d.y; commission(s); }
     if (m % 60 === 0) dutyTick(s, t, m);
+    else if (m % 5 === 0 && dutyMich(s)) michPass(s); // порыв Михалыч берёт через 10–25 минут
     if (m % 60 === 0 && hasPerk('mentor')) apprentice(s);
     if (m % 180 === 0 && season && s.upg.wctl && !s.upg.wctlOff) weatherCtl(s);
     if (m === 0) {

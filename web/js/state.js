@@ -53,6 +53,7 @@ G.St = (() => {
     S.wells.forEach((w) => { if (w.water === undefined) w.water = 0; });
     if (S.heat.fedH === undefined) Object.assign(S.heat, { fedH: new Array(24).fill(0), gk: newGk(), night: false, armed: S.heat.ps >= 2.5 && !S.heat.drain });
     if (!S.ev.duty) S.ev.duty = newDuty();
+    if (!S.flags.seasonMark) S.flags.seasonMark = { compl: S.stats.complaints, failed: S.stats.tasksFailed }; // счёт сезона — с момента загрузки
     if (S.wx.snap && S.wx.snap.frost && S.wx.snap.minTin === undefined) Object.assign(S.wx.snap, { prep: true, minTin: 99 }); // мороз уже идёт — подготовку не спрашиваем
     return S;
   }

@@ -288,7 +288,9 @@ G.Sim = (() => {
     H.qf = feeding ? feedFlow(S, H.ps) : 0;
     const mh = U.mod(S.t), hb = Math.floor(mh / 60); // подпитка за сутки: по часам
     if (mh % 60 === 0) H.fedH[hb] = 0;
-    H.fedH[hb] += H.qf / 60;
+    // слив и наполнение после него — не расход «на течь»: в сутки считаем только подпитку при рабочем давлении
+    if (H.drain) H.fedH.fill(0);
+    else if (pc0 >= P_LOW) H.fedH[hb] += H.qf / 60;
     w += H.qf / 60;
     // забытая подпитка: контур перекачан дольше получаса — ППК подтравливает сетевую воду в трап
     H.overMin = H.feed && pc0 > P_HIGH ? (H.overMin || 0) + 1 : 0;
