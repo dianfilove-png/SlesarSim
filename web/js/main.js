@@ -31,6 +31,7 @@ G.Main = (() => {
     started = true;
     G.UI.closeOverlay();
     enter(s.scene, true);
+    G.Ev.dayOffResume(s); // сохранились посреди отгула — досиживаем его
   }
   function save(force) {
     if (!started || !G.S || G.S.over) return;

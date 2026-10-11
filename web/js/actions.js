@@ -223,9 +223,16 @@ G.Act = (() => {
       H.feed = !H.feed;
       const pn = Sim.pNetRet(G.S), pTo = Sim.pAt(G.S, Sim.P_CLOSE), hot = pTo - Sim.P_CLOSE > 0.15;
       if (H.feed && pn <= H.ps) toast('Кран открыт, но вода не идёт: в обратке теплосети ' + pn.toFixed(1) + ' бар — не выше, чем в контуре.', 'bad');
-      else if (H.feed && Sim.pCold(G.S) < Sim.P_CLOSE && pn <= pTo + 0.05) toast('Подпитка открыта, но в обратке сети ' + pn.toFixed(1) + ' бар — выше не подпитать, до нормы не дойдёт.', 'bad');
+      else if (H.feed && Sim.pCold(G.S) < Sim.P_CLOSE && pn <= pTo + 0.05) toast('Подпитка открыта, но ' + Sim.netLimit(G.S) + '.', 'bad');
       else toast(H.feed ? 'Подпитка из обратки теплосети открыта. Закрывай на ~' + Sim.P_CLOSE + ' бар на холодную' + (hot ? ' (сейчас контур горячий — манометр ≈' + pTo.toFixed(1) + ')' : '') + '!' : 'Подпитка закрыта');
     });
+  }
+  // «Ночной режим»: с 22:00 до 5:00 график на 4° ниже — экономит Гкал, но дома остывают
+  function nightToggle() {
+    const H = G.S.heat;
+    H.night = !H.night;
+    toast(H.night ? 'Ночной режим включён: с 22:00 до 5:00 график на 4° ниже. Гкал сэкономим, но следи за домами!' : 'Ночной режим выключен — график круглые сутки');
+    G.UI.reopen();
   }
   function corr(d) { const H = G.S.heat; H.corr = U.clamp(H.corr + d, -15, 15); G.UI.reopen(); }
   function wctlToggle() {
@@ -339,6 +346,8 @@ G.Act = (() => {
       case 'clog': return 'Грязевик забит, большой перепад';
       case 'foul': return (x.c === 'heat' ? 'ТО отопления' : 'ВВП ГВС') + ' зарос накипью';
       case 'flood': return 'Вода на полу';
+      case 'leak': return 'Течь в подвале ' + D.HOUSES[x.i].name.replace('Дом', 'дома') + ' — нужен хомут';
+      case 'feed': return 'Подпитка за сутки ' + x.fed.toFixed(1) + ' м³ при норме ' + x.norm.toFixed(1) + ' — течь где-то (подвал, камера ТК)';
       default: return '?';
     }
   }
@@ -346,6 +355,7 @@ G.Act = (() => {
     if (G.S.scene !== 'ctp') return;
     busy('Обход ЦТП: осмотр, показания, запись в журнал', 35, { work: 0.03 }, () => {
       const s = G.S, f = [];
+      s.houses.forEach((hs, i) => { if (hs.leak) f.push({ k: 'leak', i }); }); // в подвале домов тоже заглядываем: течь без заявки
       s.valves.forEach((v, i) => {
         if (v.flange) f.push({ k: 'flange', i }); else if (v.gland) f.push({ k: 'gland', i });
         if (v.cond < 30 || v.broken) f.push({ k: 'old', i });
@@ -360,6 +370,8 @@ G.Act = (() => {
       if (s.gvs.foul >= 62) f.push({ k: 'foul', c: 'gvs' });
       if (s.flood > 20) f.push({ k: 'flood' });
       const H = s.heat, W = s.gvs;
+      const fed = Sim.fed24(s), norm = Sim.fedNorm(s);
+      if (fed > norm && !f.some((x) => x.k === 'leak')) f.push({ k: 'feed', fed, norm });
       const text = 'Т1 ' + U.deg(H.t1) + '/' + H.p1.toFixed(1) + ' бар; Т2 ' + U.deg(H.t2) + '/' + H.p2.toFixed(1) +
         '; Т3 ' + U.deg(W.t3) + '/' + W.p3.toFixed(1) + '; Т4 ' + U.deg(W.t4) + '/' + W.p4.toFixed(1) +
         '. ' + (f.length ? 'Замечания: ' + f.map(findingText).join('; ') + '.' : 'Замечаний нет.');
@@ -472,10 +484,19 @@ G.Act = (() => {
   const TK = D.TK;
   const WPIPE = ['Т1', 'Т2', 'Т3', 'Т4'];
   // шанс закиснуть: задвижки в камерах годами не трогают (i — камера)
-  const wellStickP = (v, i) => (G.S.upg.ballv[i] ? 0 : 0.04 + U.clamp((G.S.t - v.lastOp) / 1440 - 30, 0, 300) / 1000); // шаровые краны не закисают
+  const wellStickP = (v, i) => (G.S.upg.ballv[i] ? 0 : (0.04 + U.clamp((G.S.t - v.lastOp) / 1440 - 30, 0, 300) / 1000) * (Sim.wellFlooded(G.S, i) ? 1.3 : 1)); // шаровые краны не закисают; в залитой камере — на 30% чаще
+  const waterText = (i) => 'вода в ' + TK(i) + ' ' + Math.round(G.S.wells[i].water || 0) + '%';
+  // откачать воду из камеры: ведро и ручной насос
+  function wellPump(i) {
+    const w = G.S.wells[i];
+    if ((w.water || 0) < 5) return toast('В камере сухо — откачивать нечего');
+    busy('Откачиваю воду из ' + TK(i) + ': ведро и ручной насос', 20, { work: 0.08 }, () => { w.water = 0; toast('Из ' + TK(i) + ' воду откачал — сухо', 'good'); });
+  }
   function wellDown(i) {
-    const s = G.S;
-    busy('Поддеваю люк крюком, спускаюсь в камеру ' + TK(i), 4, { work: 0.04 }, () => {
+    const s = G.S, B0 = s.ev.burst, wet = Sim.wellFlooded(s, i);
+    // залитая камера: сначала откачать; при порыве некогда — лезешь по пояс в воде, дольше
+    if (wet && !(B0 && B0.house === i)) return toast('Камера ' + TK(i) + ' залита дождями (' + waterText(i) + ') — сначала откачай воду, потом ревизия и спуск.', 'bad');
+    busy('Поддеваю люк крюком, спускаюсь в камеру ' + TK(i) + (wet ? ' по пояс в воде' : ''), wet ? 14 : 4, { work: 0.04 }, () => {
       const B = s.ev.burst;
       s.well = i;
       G.Main.enter('well');
@@ -493,8 +514,11 @@ G.Act = (() => {
     toast('Порыв отсечён — вода больше не уходит!', 'good');
     if (!B.arrived && !B.selfIso) {
       B.selfIso = true;
-      Ev.xp(15); Ev.trust(2); Ev.mood(5);
-      Ev.msg(Ev.ODS, 'Слесарь сам перекрыл ввод в камере ' + TK(i) + ' — молодец, оперативно!' + (B.called === null ? ' Бригаду-то вызвал?' : ''));
+      // премия за порыв — только за ввод, перекрытый до приезда бригады (звонок сам по себе — базовое закрытие заявки)
+      const h = U.hour(s.t), night = h < 6 || h >= 22;
+      Ev.xp(25); Ev.trust(3); Ev.mood(5);
+      if (night) Ev.earn(700, 'burst');
+      Ev.msg(Ev.ODS, 'Слесарь сам перекрыл ввод в камере ' + TK(i) + ' — молодец, оперативно!' + (B.called === null ? ' Бригаду-то вызвал?' : '') + (night ? ' Ночные — 700 ₽.' : ''));
     }
   }
   // порыв у дома не заварен — его контур в камере открывать нельзя: '' или причина
@@ -539,6 +563,7 @@ G.Act = (() => {
     const s = G.S, w = s.wells[i];
     if (s.upg.ballv[i]) return toast('Здесь шаровые краны — ревизия не нужна');
     if (s.ev.burst && s.ev.burst.house === i) return toast('Не до ревизии — на вводе порыв', 'bad');
+    if (Sim.wellFlooded(s, i)) return toast('Камера залита (' + waterText(i) + ') — сначала откачай воду', 'bad');
     if (w.v.some((v) => !v.open)) return toast('Сначала открой все задвижки — ревизия на работающей камере', 'bad');
     busy('Ревизия ' + TK(i) + ': расхаживаю задвижки, смазываю шпиндели', 25, { work: 0.08 }, () => {
       const bad = [];
@@ -602,7 +627,12 @@ G.Act = (() => {
   // склад: лимит на месяц и заявок в день («Хозяйственник» — +50% и две)
   const skladLimit = () => D.SKLAD_LIMIT * (Ev.hasPerk('boss') ? 1.5 : 1);
   const ordersLeft = () => { const s = G.S; return (Ev.hasPerk('boss') ? 2 : 1) - (s.sklad.lastDay === U.day(s.t) ? s.sklad.today : 0); };
-  function orderArrive() { return U.nextAt(G.S.t + 60, 9 * 60); }
+  // склад не возит по воскресеньям и праздникам — привезут в ближайший рабочий день к 9:00
+  function orderArrive() {
+    let r = U.nextAt(G.S.t + 60, 9 * 60);
+    while (U.date(r).wd === 0 || U.isHoliday(r)) r += 1440;
+    return r;
+  }
   function order(items) {
     const s = G.S;
     const day = U.day(s.t);
@@ -614,13 +644,14 @@ G.Act = (() => {
     s.sklad.spent += sum;
     s.sklad.today = s.sklad.lastDay === day ? s.sklad.today + 1 : 1;
     s.sklad.lastDay = day;
-    s.orders.push({ items, arrive: orderArrive() });
-    G.Ev.msg('Склад УК', 'Заявка принята, привезём на ЦТП-7 к 9:00 (' + U.dateStr(orderArrive()) + ').');
+    const at = orderArrive();
+    s.orders.push({ items, arrive: at });
+    G.Ev.msg('Склад УК', 'Заявка принята, привезём на ЦТП-7 к 9:00 (' + U.dateStr(at) + ')' + (U.day(at) - day > 1 ? ' — в воскресенье и праздники склад не возит.' : '.'));
     G.UI.reopen();
   }
 
   return { upgInstall, upgLeft, inv, has, tool, dur, procDur, skladLimit, ordersLeft, why, vacationSeason, vacationPay, valveToggle, valveUnstick, valveTighten, valveRepack,
     valveReplace, valveRegasket, pumpStart, pumpStop, pumpLube, pumpBearings, pumpSeal, drain, feed, corr, gvsSet,
     cleanFilter, flush, installReg, obhod, eat, machineCoffee, sleep, tv, shower, read, fishing, bleedAir, clampLeak,
-    meter, job, wctlToggle, callBrigade, talk, wellDown, wellLock, wellToggle, wellUnstick, wellRevise, wellStickP, shopOpen, buy, order, circName, take, pressTest, vacation };
+    meter, job, wctlToggle, callBrigade, talk, wellDown, wellPump, nightToggle, wellLock, wellToggle, wellUnstick, wellRevise, wellStickP, shopOpen, buy, order, circName, take, pressTest, vacation };
 })();

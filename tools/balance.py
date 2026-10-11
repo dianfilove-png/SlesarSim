@@ -28,6 +28,8 @@ BOT = """
   s.valves.forEach(v => { v.gland = 0; v.flange = 0; v.stuck = false; v.open = true; });
   if (H.clog > 55) H.clog = 0; if (s.gvs.foul > 65) s.gvs.foul = 5; if (H.foul > 65) H.foul = 5;
   s.houses.forEach(x => { x.air = 0; x.leak = 0; });
+  s.wells.forEach(w => { w.water = 0; }); // откачал воду из камер (дожди осенью)
+  // выходные: дежурит сам (по умолчанию) — выбирать нечего
   s.tasks.forEach(k => { if (!k.done && !k.failed && (k.type === 'meter' || k.type === 'job')) k.doneFlag = true; });
   if (s.ev.burst && s.ev.burst.called === null) s.ev.burst.called = s.t;
   if (s.ev.burst && !G.Sim.burstIsolated(s)) G.D.WELL_PIPES[s.ev.burst.pipe].forEach(k => { Object.assign(s.wells[s.ev.burst.house].v[k], { open: false, stuck: false }); });

@@ -927,7 +927,7 @@ G.R = (() => {
     text('к ' + hd.name.replace('Дом', 'дому') + ' →', 940, WL.top[0] - 22, 13, '#ffd36b', 'right', true);
     for (let k = 0; k < 4; k++) wellValve(WL.x[k], WL.vy, w.v[k], k);
     // вода на полу; при порыве на этом вводе — кипяток и пар
-    const lvl = leak ? 10 + leak * 26 : B && B.house === i ? 8 : 3;
+    const lvl = Math.max(leak ? 10 + leak * 26 : B && B.house === i ? 8 : 3, (w.water || 0) * 1.1); // дождевая вода в камере
     ctx.fillStyle = leak ? 'rgba(150,170,190,.55)' : 'rgba(70,110,160,.45)';
     ctx.fillRect(-400, WL.floor - lvl, 1800, lvl + 4);
     if (leak) {

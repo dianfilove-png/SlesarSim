@@ -252,7 +252,7 @@ G.UI = (() => {
     panel('Оборудование ЦТП', (b) => {
       const H = s.heat, W = s.gvs;
       const Sm = G.Sim, qh = Sm.qn(s, 'heat'), qg = Sm.qn(s, 'gvs');
-      kv(b, 'Отопление', H.ps.toFixed(1) + ' бар · Т1 ' + U.deg(H.t1) + ' · ' + Math.round(H.q) + ' м³/ч · ' + gcal(H.kw), qh > 0.5 ? 'ok' : Sm.heatSeason(s.t) ? 'bad' : 'warn');
+      kv(b, 'Отопление', H.ps.toFixed(1) + ' бар' + (H.ps - Sm.pCold(s) > 0.15 ? ' (на холодную ≈' + Sm.pCold(s).toFixed(1) + ')' : '') + ' · Т1 ' + U.deg(H.t1) + ' · ' + Math.round(H.q) + ' м³/ч · ' + gcal(H.kw), qh > 0.5 ? 'ok' : Sm.heatSeason(s.t) ? 'bad' : 'warn');
       kv(b, 'ГВС', W.ps.toFixed(1) + ' бар · Т3 ' + U.deg(W.t3) + ' · разбор ' + W.draw.toFixed(1) + ' м³/ч · циркуляция ' + (qg > 0.3 ? W.q.toFixed(1) + ' м³/ч' : 'нет'), qg > 0.3 && W.ps > 1 ? 'ok' : 'bad');
       const nbad = checklist('heat').concat(checklist('gvs')).filter((x) => !x.ok).length;
       btn(b, 'Чек-лист пуска (шкаф)' + (nbad ? ' — не готово: ' + nbad : ' — всё ✔'), () => openObj('cabinet'), { cls: nbad ? 'warn' : '' });
@@ -446,13 +446,14 @@ G.UI = (() => {
     panel('Подпитка отопления', (b) => {
       const H = s.heat;
       const Sm = G.Sim, F = feedState(s), pn = F.pn, pc = F.pc, off = s.ev.netOff && s.ev.netOff.started;
-      para(b, 'Линия от обратки теплосети (ТЭЦ) в обратку Т2: сетевая вода идёт сама, пока давление в обратке сети выше, чем в контуре. Восполняет утечки. Правило: на холодную держи ~' + Sm.P_CLOSE + ' бар (' + Sm.P_LOW + '–' + Sm.P_WARN + '), на прогреве вода расширяется и манометр вырастет сам. Выше ' + Sm.P_PPK + ' бар сбрасывает предохранительный клапан.', true);
+      para(b, 'Линия от обратки теплосети (ТЭЦ) в обратку Т2: сетевая вода идёт сама, пока давление в обратке сети выше, чем в контуре. Восполняет утечки. Правило: на холодную держи ~' + Sm.P_CLOSE + ' бар (' + Sm.P_LOW + '–' + Sm.P_WARN + '), на прогреве вода расширяется и манометр вырастет сам. Предохранительный клапан (ППК) сбрасывает воду при ' + Sm.P_PPK + ' бар статики в баке; манометр Т1 показывает статику плюс напор насоса, поэтому на работающем контуре он выше.', true);
       kv(b, 'Статика на ЦТП', pText(s) + ' бар', H.ps > 6 || H.ps < 2 ? 'bad' : pc < Sm.P_LOW || pc > Sm.P_HIGH || H.ps > Sm.P_HOT ? 'warn' : 'ok');
       kv(b, 'Обратка теплосети', pn.toFixed(1) + ' бар' + (off ? ' — испытания, сети нет' : s.ev.netLowP ? ' — упало давление!' : ''), pn <= H.ps ? 'bad' : pn < Sm.P_NET_R ? 'warn' : 'ok');
       const qf = Sm.feedFlow(s, H.ps);
+      fedKv(b);
       kv(b, 'Кран подпитки', H.feed ? 'ОТКРЫТ' + (qf > 0.01 ? ' · ' + qf.toFixed(1) + ' м³/ч' : ' · не идёт') : 'закрыт', H.feed ? 'warn' : '');
       const going = H.feed && pc < Sm.P_CLOSE && !H.drain && !F.noNet && F.eta < Infinity;
-      if (H.feed && pc < Sm.P_CLOSE) kv(b, 'До ' + Sm.P_CLOSE + ' бар на холодную', H.drain ? 'не наберётся — открыт дренаж!' : F.noNet ? 'не наберётся — ' + F.netText
+      if (H.feed && pc < Sm.P_CLOSE) kv(b, 'До ' + Sm.P_CLOSE + ' бар на холодную', H.drain ? 'не наберётся — открыт дренаж!' : F.noNet ? 'не наберётся: ' + F.netText
         : !going ? 'не растёт — течь больше подпитки!' : '≈ ' + U.dur(F.eta) + (F.hot ? ' · манометр ≈' + F.pTo.toFixed(1) : ''), going ? 'warn' : 'bad');
       if (H.feed && pc >= Sm.P_CLOSE) kv(b, 'Давление набрано', 'закрой подпитку!', 'bad');
       if (H.auto) kv(b, 'Регулятор РД-3М', H.autoOn ? 'подпитывает' : 'держит 3.8–4.2 бар на холодную', 'ok');
@@ -481,7 +482,7 @@ G.UI = (() => {
         kv(b, 'Циркуляция', q > 0.3 ? W.q.toFixed(1) + ' м³/ч' : 'нет', q > 0.3 ? 'ok' : 'warn');
         if (pipe === 3) kv(b, 'Разбор жильцами', W.draw.toFixed(1) + ' м³/ч');
       }
-      para(b, pipe === 1 ? 'Горячая вода в батареи квартала. Её температура зависит от погоды (график).' :
+      para(b, pipe === 1 ? 'Горячая вода в батареи квартала. Её температура зависит от погоды (график). Манометр Т1 показывает статику плюс напор насоса; норму подпитки смотри по статике.' :
         pipe === 2 ? 'Остывшая вода из батарей возвращается на ЦТП, через грязевик и насосы — в теплообменник. Манометры Т1/Т2 показывают статику плюс напор насоса; норму подпитки смотри по статике.' :
         pipe === 3 ? 'Горячая вода в краны жильцов, должна быть 60–75°C.' : 'Циркуляция: вода из стояков возвращается, чтобы в кранах не остывала. Без неё на дальних домах вода еле тёплая.', true);
     }, true);
@@ -526,6 +527,12 @@ G.UI = (() => {
         iss.slice(0, 6).forEach((x) => para(b, '• ' + x, true));
         pressBtn(b);
       }
+      if (s.wx.frost || (s.wx.snap && s.wx.snap.frost)) {
+        sect(b, 'Готовность к морозу');
+        const fr = G.Ev.frostReady(s);
+        fr.list.forEach((x) => kv(b, (x.ok ? '✔ ' : '✘ ') + x.t, x.ok ? 'да' : 'нет', x.ok ? 'ok' : 'bad'));
+        kv(b, 'Премия за мороз', fr.ok ? 'будет, если дома не промёрзнут и жалоб не будет' : 'не светит: график +4° или всё оборудование в порядке', fr.ok ? 'ok' : 'warn');
+      }
       sect(b, 'Пуск отопления — по порядку');
       drawChecklist(b, 'heat');
       sect(b, 'Пуск ГВС — по порядку');
@@ -545,9 +552,13 @@ G.UI = (() => {
       if (G.Sim.heatSeason(s.t) && s.heat.gn >= G.Sim.GN_MAX - 0.1 && s.heat.t1 < sched + s.heat.corr - 2)
         kv(b, 'Потолок нагрева ' + U.deg(G.Sim.maxT(s, 'heat')), (s.ev.netDrop ? 'авария на ТЭЦ' : s.heat.foul >= 55 ? 'накипь в ТО — промыть' : 'ТЭЦ/накипь') + ', график выше не поднять', 'warn');
       kv(b, 'Статика отопления', pText(s) + ' бар · норма на холодную ' + G.Sim.P_LOW + '–' + G.Sim.P_WARN, '');
+      fedKv(b);
+      const au = G.Ev.heatAudit(s, true);
+      if (au) kv(b, 'Гкал к нормативу месяца', (au.pct >= 0 ? '+' : '−') + Math.abs(au.pct) + '%' + (au.over ? ' — перерасход' : au.save ? ' — экономия' : ''), au.over ? 'bad' : au.save ? 'ok' : '');
       const r1 = h('div', 'row2');
       btn(r1, '−2°', () => A().corr(-2)); btn(r1, '+2°', () => A().corr(2));
       b.appendChild(r1);
+      btn(b, 'Ночной режим: ' + (s.heat.night ? 'ВКЛЮЧЁН' : 'выключен'), () => A().nightToggle(), { cls: s.heat.night ? 'warn' : '', sub: '22:00–5:00 график на 4° ниже: экономит Гкал, но дома остывают — жалобы' });
       para(b, 'Жалобы на холод — подними коррекцию. На жару — опусти. Самый дальний и старый дом мёрзнет первым.', true);
       if (s.upg.wctl && !s.upg.wctlOff) para(b, 'Контроллер сам двигает график раз в 3 ч — ручная правка перебивается.', true);
       const U2 = s.upg, have = ['wctl', 'modem', 'sms'].filter((id) => U2[id] || inv(id));
@@ -590,6 +601,11 @@ G.UI = (() => {
     });
   }
 
+  // подпитка за сутки против нормы: перерасход — невидимая течь (подвал, камера ТК)
+  function fedKv(b) {
+    const Sm = G.Sim, fed = Sm.fed24(G.S), norm = Sm.fedNorm(G.S);
+    kv(b, 'Подпитка за сутки', fed.toFixed(1) + ' м³ (норма ' + norm.toFixed(1) + ')' + (fed > norm ? ' — течь где-то?' : ''), fed > norm ? 'bad' : 'ok');
+  }
   // давление отопления для подписей: «сейчас 5.1 · на холодную ≈4.0» (холодный контур — одно число)
   function pText(s) {
     const ps = s.heat.ps, pc = G.Sim.pCold(s);
@@ -599,8 +615,9 @@ G.UI = (() => {
   function feedState(s) {
     const Sm = G.Sim, H = s.heat, pc = Sm.pCold(s), pn = Sm.pNetRet(s), pTo = Sm.pAt(s, Sm.P_CLOSE);
     const noNet = pn <= Math.max(H.ps, pTo) + 0.05;
-    const netText = s.ev.netOff && s.ev.netOff.started ? 'испытания магистрали — сети нет, подпитать нечем' : 'в обратке сети ' + pn.toFixed(1) + ' бар — выше не подпитать';
-    return { pc, pn, pTo, noNet, netText, hot: H.ps - pc > 0.15, eta: Sm.feedEta(s, Sm.P_CLOSE) };
+    // сеть выше не даст, а контур уже у её предела — пускать насос можно от достигнутого
+    const reached = noNet && pn > 2 && H.ps >= pn - 0.3;
+    return { pc, pn, pTo, noNet, reached, netText: Sm.netLimit(s), hot: H.ps - pc > 0.15, eta: Sm.feedEta(s, Sm.P_CLOSE) };
   }
   // ---------- чек-лист пуска контура (что мешает воде пойти)
   function checklist(c) {
@@ -625,12 +642,14 @@ G.UI = (() => {
       const Sm = G.Sim, F = feedState(s), pc = F.pc, low = pc < Sm.P_LOW, high = pc > Sm.P_HIGH || C.ps > Sm.P_HOT;
       const feeding = C.feed || (C.auto && C.autoOn);
       const rising = feeding && F.eta < Infinity;
-      L.push({ t: 'Давление на холодную ' + Sm.P_LOW + '–' + Sm.P_WARN + ' бар (' + pText(s) + ')', ok: !low && !high, wait: low && rising,
-        how: high ? 'много — ненадолго открыть дренаж' : C.drain ? 'сначала закрой дренаж' : F.noNet ? F.netText + ', жди'
+      const toLimit = F.noNet && feeding && Sm.feedNetRate(s) > 0.001 && !F.reached; // ещё поднимается до предела сети
+      L.push({ t: 'Давление на холодную ' + Sm.P_LOW + '–' + Sm.P_WARN + ' бар (' + pText(s) + ')', ok: (!low || F.reached) && !high, wait: low && (rising || toLimit),
+        okText: F.reached && low ? 'сеть выше ~' + F.pn.toFixed(1) + ' бар не даст — пускай как есть' : undefined,
+        how: high ? 'много — ненадолго открыть дренаж' : C.drain ? 'сначала закрой дренаж' : F.noNet ? F.netText
           : feeding && !rising ? 'течь больше подпитки — ищи утечку' : C.auto && C.autoOn ? 'регулятор подпитывает — жди' : C.feed ? 'идёт подпитка — жди' : 'открыть подпитку (кран у Т2)' });
-      if (!C.auto || C.feed) L.push({ t: 'Подпитка закрыта', ok: !C.feed, wait: C.feed && pc < Sm.P_CLOSE && rising,
+      if (!C.auto || C.feed) L.push({ t: 'Подпитка закрыта', ok: !C.feed, wait: C.feed && ((pc < Sm.P_CLOSE && rising) || toLimit),
         how: pc >= Sm.P_CLOSE ? 'закрыть кран подпитки!' : rising ? 'закроешь на ~' + Sm.P_CLOSE + ' бар на холодную' + (F.hot ? ' (манометр ≈' + F.pTo.toFixed(1) + ')' : '')
-          : F.noNet ? F.netText + ' — закрой' : 'давление не растёт — закрой, разберись' });
+          : F.noNet ? (F.reached ? 'сеть больше не даст — закрой' : 'закроешь, когда давление встанет') : 'давление не растёт — закрой, разберись' });
     } else {
       L.push({ t: 'Холодная вода в квартале', ok: !s.ev.hvs, how: 'водоканал отключил — ждать' });
       const B = s.ev.burst, gb = B && B.pipe === 'gvs' && !G.Sim.burstIsolated(s);
@@ -643,7 +662,7 @@ G.UI = (() => {
     return L;
   }
   function drawChecklist(b, c, noPump) {
-    checklist(c).filter((x) => !(noPump && x.pump)).forEach((x) => kv(b, (x.ok ? '✔ ' : x.wait ? '… ' : '✘ ') + x.t, x.ok ? 'да' : x.how, x.ok ? 'ok' : x.wait ? 'warn' : 'bad'));
+    checklist(c).filter((x) => !(noPump && x.pump)).forEach((x) => kv(b, (x.ok ? '✔ ' : x.wait ? '… ' : '✘ ') + x.t, x.ok ? x.okText || 'да' : x.how, x.ok ? 'ok' : x.wait ? 'warn' : 'bad'));
   }
   // кнопка пуска: оранжевая, только если перед пуском всё ✔
   function startOpts(p) {
@@ -739,6 +758,7 @@ G.UI = (() => {
     para(b, hd.floors + ' этажей, ' + hd.apts + ' квартир.', true);
     if (G.Sim.heatSeason(s.t)) kv(b, 'В квартирах', U.deg1(hs.tin) + 'C', hs.tin < 18.5 ? 'bad' : hs.tin > 25.5 ? 'warn' : 'ok');
     kv(b, 'Горячая вода', U.deg(hs.ttap) + 'C', hs.ttap < 50 ? 'bad' : hs.ttap < 58 ? 'warn' : 'ok');
+    if (hs.leak) kv(b, 'Подвал', 'Течь в подвале — хомут!', 'bad');
     // подсказка причины: что видно с ЦТП и из камеры
     const Sm = G.Sim, wv = s.wells[i].v, season = Sm.heatSeason(s.t);
     if (season && !Sm.wellOpen(s, i, 'heat')) kv(b, 'Отопление', 'перекрыто в ' + TK(i), 'bad');
@@ -810,6 +830,8 @@ G.UI = (() => {
     w.v.forEach((v, k) => kv(b, D.PIPES[k + 1].full.replace(' — ', ' (') + ')', wellState(v), wellCls(v)));
     burstKv(b, i);
     if (w.fixAt !== null) kv(b, 'Подрядчики', 'заменят задвижку ' + U.dateStr(w.fixAt) + ', ' + U.clock(w.fixAt), 'warn');
+    const wt = Math.round(w.water || 0);
+    if (wt >= 5) kv(b, 'Вода в камере', (wt >= G.Sim.FLOODED ? 'ЗАЛИТА ' : 'сыро ') + wt + '%', wt >= G.Sim.FLOODED ? 'bad' : 'warn');
     if (s.upg.ballv[i]) kv(b, 'Ревизия', 'шаровые краны — не нужна', 'ok');
     else kv(b, 'Ревизия', w.revAt >= 0 ? U.dateStr(w.revAt) : 'не проводилась', w.revAt >= 0 ? 'ok' : 'warn');
   }
@@ -823,8 +845,10 @@ G.UI = (() => {
       sect(b, 'Действия');
       const hot = B && B.house === i && !G.Sim.burstIsolated(s);
       const suit = !!s.p.tools.suit;
-      btn(b, 'Открыть люк и спуститься', () => A().wellDown(i), { cls: hot ? 'danger' : 'main',
-        sub: dur(4) + (hot ? (suit ? ' · внизу пар — в термокостюме не страшно' : ' · внизу пар и кипяток — можно ошпариться!') : ' · крюком поддеть крышку') });
+      const wet = G.Sim.wellFlooded(s, i), wt = Math.round(s.wells[i].water || 0);
+      if (wt >= 5) btn(b, 'Откачать воду из камеры', () => A().wellPump(i), { cls: wet && !hot ? 'main' : '', sub: dur(20) + ' · ведро и ручной насос · сейчас ' + wt + '%' });
+      btn(b, 'Открыть люк и спуститься', () => A().wellDown(i), { cls: hot ? 'danger' : wet ? 'warn' : 'main',
+        sub: (wet ? (hot ? dur(14) + ' · камера залита — спуск дольше' : 'камера залита — сначала откачай воду') : dur(4)) + (hot ? (suit ? ' · внизу пар — в термокостюме не страшно' : ' · внизу пар и кипяток — можно ошпариться!') : ' · крюком поддеть крышку') });
       if (B && B.house === i && B.called === null) btn(b, 'Вызвать аварийную бригаду на порыв!', () => A().callBrigade(), { cls: 'danger', sub: dur(5) });
       btn(b, 'Отойти', () => closePanel(), { cls: 'ghost' });
     }, true);
@@ -853,11 +877,13 @@ G.UI = (() => {
           lock ? { disabled: true, sub: lock } : { cls: urgent ? 'main' : '', sub: dur(6) + (v.open ? ' · дом останется без ' + (k < 2 ? 'отопления' : 'горячей воды') : '') });
       });
       sect(b, 'Обслуживание');
+      if ((w.water || 0) >= 5) btn(b, 'Откачать воду из камеры', () => A().wellPump(i), { cls: G.Sim.wellFlooded(s, i) ? 'main' : '', sub: dur(20) + ' · ведро и ручной насос · вода ' + Math.round(w.water) + '%' });
       if (!ball) upgBtn(b, 'ballv', i);
       const rv = w.v.some((v) => !v.open);
       const rt = G.Ev.openTask('wellRev');
       btn(b, 'Ревизия: расходить все задвижки', () => A().wellRevise(i), ball ? { disabled: true, sub: 'Шаровые краны не требуют ревизии' }
         : B && B.house === i ? { disabled: true, sub: 'Не до ревизии — на вводе порыв' }
+        : G.Sim.wellFlooded(s, i) ? { disabled: true, sub: 'Камера залита — сначала откачай воду' }
         : { cls: rv ? 'warn' : rt && !(w.revAt > rt.from) ? 'main' : '', sub: rv ? 'Сначала открыть все задвижки' : 'Закрыть-открыть каждую, смазать шпиндель · ' + dur(25) });
       btn(b, 'Подняться наверх', () => G.Main.exit(), { cls: 'ghost' });
     }, true);
@@ -930,7 +956,7 @@ G.UI = (() => {
   function skladTab(b) {
     const s = G.S;
     const lim = A().skladLimit(), left = A().ordersLeft();
-    para(b, 'Запчасти со склада управляющей компании — бесплатно, но привезут на ЦТП к 9:00 следующего дня. ' + (G.Ev.hasPerk('boss') ? 'Две заявки' : 'Одна заявка') + ' в день, лимит ' + U.money(lim) + ' в месяц.', true);
+    para(b, 'Запчасти со склада управляющей компании — бесплатно, но привезут на ЦТП к 9:00 следующего дня (в воскресенье и праздники склад не возит — тогда в ближайший рабочий). ' + (G.Ev.hasPerk('boss') ? 'Две заявки' : 'Одна заявка') + ' в день, лимит ' + U.money(lim) + ' в месяц.', true);
     kv(b, 'Использовано в этом месяце', U.money(s.sklad.spent) + ' из ' + U.money(lim));
     let sum = 0;
     Object.keys(D.ITEMS).filter((id) => D.ITEMS[id].sklad).forEach((id) => {
@@ -974,6 +1000,9 @@ G.UI = (() => {
     kv(b, 'Доверие начальства', Math.round(P.trust) + ' / 100', P.trust > 60 ? 'ok' : P.trust > 30 ? 'warn' : 'bad');
     meter(b, P.trust, P.trust > 60 ? '#4caf50' : P.trust > 30 ? '#f0b030' : '#e53935');
     para(b, 'Аванс 20-го, зарплата 5-го (с неё же — квартплата 9 000 ₽). Премия: доверие от 55 — 10%, от 75 — 20%, от 90 — 30%. Выше 90 доверие поднимают только дела. 5-го — табель от Петровича. Доверие 0 — увольнение.', true);
+    sect(b, 'Выходные');
+    const nb = G.Ev.dutyBlocks(s, 1)[0], MODE = { self: 'дежурю сам', mich: 'подмена Михалыча', off: 'отгул', skip: 'дежурю сам' };
+    btn(b, 'График дежурств', () => panelDuty(), { sub: nb ? U.dateStr(nb.id * 1440) + ': ' + MODE[nb.mode] + (nb.locked ? ' (закреплено)' : '') : 'вне сезона дежурств нет' });
     sect(b, 'Статистика');
     kv(b, 'Дней на ЦТП', String(U.day(s.t) + 1));
     kv(b, 'Ремонтов', String(s.stats.repairs));
@@ -987,6 +1016,27 @@ G.UI = (() => {
       sect(b, 'Отпуск');
       btn(b, 'Уйти в отпуск на 2 недели', () => A().vacation(), { sub: 'Отпускные ' + U.money(A().vacationPay()) + ' · настроение +40 · на ЦТП подменит Михалыч' });
     }
+  }
+
+  // график дежурств: сам (+1 500 ₽ за сутки), подмена Михалыча (−2 500 ₽) или отгул
+  function panelDuty() {
+    const s = G.S;
+    const MODE = { self: 'дежурю сам', mich: 'подмена Михалыча', off: 'отгул', skip: 'дежурю сам' };
+    const pick = (id, mode) => { const r = G.Ev.dutyPick(id, mode); if (r) toast(r, 'bad'); else render(); };
+    panel('График дежурств', (b) => {
+      para(b, 'В отопительный сезон на каждые выходные и праздники реши, кто на посту. Выбор — до пятницы 17:00 (до 17:00 последнего рабочего дня), потом он закреплён. Не выбрал — «Дежурю сам».', true);
+      const bl = G.Ev.dutyBlocks(s, 4);
+      if (!bl.length) para(b, 'Отопительный сезон закончился — дежурств нет.');
+      bl.forEach((x) => {
+        sect(b, U.dateStr(x.id * 1440) + (x.days > 1 ? ' — ' + U.dateStr((x.id + x.days - 1) * 1440) : '') + ' · ' + x.days + ' ' + U.plural(x.days, 'сутки', 'суток', 'суток'));
+        kv(b, 'Выбрано', MODE[x.mode] + (x.locked ? ' · закреплено' : ''), x.mode === 'mich' ? 'warn' : 'ok');
+        if (x.locked) return;
+        btn(b, 'Дежурю сам', () => pick(x.id, 'self'), { cls: x.mode === 'self' ? 'main' : '', sub: '+' + U.money(1500) + ' за сутки · аварии мои, как обычно' });
+        btn(b, 'Подмена Михалыча', () => pick(x.id, 'mich'), { cls: x.mode === 'mich' ? 'main' : '', sub: '−' + U.money(2500) + ' из кармана (нет денег — доверие −3) · аварийные заявки Михалыч закроет сам за 2–6 ч, без опыта и штрафов; рутину не трогает' });
+        btn(b, 'Взять отгул', () => pick(x.id, 'off'), x.off ? { cls: x.mode === 'off' ? 'main' : '', sub: 'Сб 8:00 → Вс 20:00, связи нет · настроение +25 · раз в 2 месяца · 15%: что-то сгорит и срежут премию' } : { disabled: true, sub: x.offWhy });
+      });
+      btn(b, 'Назад', () => phone('me'), { cls: 'ghost' });
+    });
   }
 
   function obhodReport(list) {
@@ -1037,6 +1087,7 @@ G.UI = (() => {
       '<p><b>Квартал.</b> Над домами — температура в квартирах и горячей воды, точка слева: зелёная — норма, жёлтая — на грани, красная — плохо. Если холодно — сначала предупредит диспетчер, потом жильцы звонят. Регулятор в шкафу управления позволяет поднять или опустить график.</p>' +
       '<p><b>Тепловые камеры.</b> Перед каждым домом на тротуаре — люк ТК: внизу ответвление теплотрассы на дом и 4 задвижки. При порыве у дома вызови аварийку и сам спустись перекрыть ввод (Т1+Т2 — отопление, Т3+Т4 — горячая вода): вода перестанет уходить, бригада быстрее управится. После ремонта задвижки надо открыть. Летом — ревизия камер, чтобы задвижки не закисли.</p>' +
       '<p><b>Жизнь.</b> Ешь, спи, отдыхай. Зарплата 5-го и 20-го, 5-го же — квартплата и табель от Петровича: премия зависит от доверия. Запчасти бесплатно со склада (через телефон, к утру) или сразу в магазине за свои. Шабашки у жильцов — подработка. Лишние деньги — в модернизацию ЦТП (магазин): частотники, погодный контроллер, шаровые краны в камеры.</p>' +
+      '<p><b>Выходные.</b> В сезон на каждые выходные и праздники выбирай (Телефон → Я → График дежурств): дежурить самому (+1 500 ₽ за сутки) или оплатить подмену Михалыча (−2 500 ₽) — он сам закроет аварийные заявки, но не рутину. Раз в два месяца можно взять отгул: с субботы 8:00 до воскресенья 20:00 связи нет. Осенью дожди заливают камеры ТК — перед спуском и ревизией воду надо откачать. Ночной режим в шкафу и сверка Гкал 5-го: экономия — в премию.</p>' +
       '<p><b>Разряды.</b> Опыт — за работу и справочник. На каждом новом разряде выбираешь одно из двух умений (Телефон → Я).</p>' +
       '<p><b>Лето</b> (после 15 мая): ремонтная кампания по плану начальника — опрессовка отопления, ревизия насосов, грязевик. В июне теплосеть отключает горячую воду на 10 дней. Можно взять отпуск (Телефон → Я). 1 сентября — комиссия по готовности, 1 октября — пуск отопления.</p>' +
       '<p><b>Цель</b> — продержаться до конца отопительного сезона 15 мая и не лишиться доверия начальства. Время: кнопки ❚❚ / ×1 / ×5 / ×20.</p>' +
@@ -1064,8 +1115,10 @@ G.UI = (() => {
     btn(list, 'Решу потом', later, { cls: 'ghost', sub: 'Выбрать можно в Телефон → Я' });
   }
   function victory() {
-    const s = G.S;
-    const o = overlay('<div class="ov text"><h2>Отопительный сезон закрыт!</h2><p>Ты продержался всю зиму. Квартал в тепле, начальство довольно.</p><ul>' +
+    const s = G.S, bad = G.Ev.seasonBad(s), M = s.flags.seasonMark || { compl: 0, failed: 0 };
+    const o = overlay('<div class="ov text"><h2>' + (bad ? 'Сезон закрыт, но жильцы помнят…' : 'Отопительный сезон закрыт!') + '</h2><p>' +
+      (bad ? 'Отопление дотянули до 15 мая, но память у жильцов хорошая: жалоб за сезон — ' + (s.stats.complaints - M.compl) + ', просроченных заявок — ' + (s.stats.tasksFailed - M.failed) + '. Петрович выдал премию с кислым лицом: на следующий сезон подтянись.'
+        : 'Ты продержался всю зиму. Квартал в тепле, начальство довольно.') + '</p><ul>' +
       '<li>Разряд: ' + D.RANKS[G.Ev.rankIdx()].r + '-й</li><li>Ремонтов: ' + s.stats.repairs + '</li><li>Заявок выполнено: ' + s.stats.tasksDone + '</li><li>Жалоб: ' + s.stats.complaints + '</li><li>Заработано: ' + U.money(s.stats.earned) + '</li></ul>' +
       '<p>Можно играть дальше: летом ремонты, осенью новый сезон.</p><div id="v-ok"></div></div>');
     btn(o.querySelector('#v-ok'), 'Играть дальше', () => closeOverlay(), { cls: 'main' });
@@ -1105,5 +1158,5 @@ G.UI = (() => {
 
   return Object.assign(api, { init, hud, tick, toast, onMessage, say, flash, ring, panel, reopen, closePanel, hidePanelForBusy, isModal,
     panelOpen, overlayOpen, closeOverlay, overlayBack, panelPump, panelValve, panelHX, panelNet, panelHvs, panelEquip, openObj, ctpPanel, checklist, pressReport, panelFilter, panelDrain, panelFeed, panelGauge, panelCabinet,
-    panelDesk, panelBox, panelHome, panelHouse, panelBasement, panelHatch, panelWell, panelShop, phone, obhodReport, menu, help, intro, victory, gameOver, hint, perkChoice });
+    panelDesk, panelBox, panelDuty, panelHome, panelHouse, panelBasement, panelHatch, panelWell, panelShop, phone, obhodReport, menu, help, intro, victory, gameOver, hint, perkChoice });
 })();

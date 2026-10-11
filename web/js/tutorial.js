@@ -48,7 +48,7 @@ G.Tut = (() => {
       },
       done: (s) => (s.p.inv.valve || 0) > 0 || s.orders.some((o) => o.items.valve) || s.valves[4].replacedAt > 0 },
     { id: 'wait', text: 'Отлично! Пока ждёшь задвижку — живи: ешь, спи, отвечай на жалобы (Телефон → Заявки). Когда привезут — покажу замену.',
-      ack: 'Понятно', done: (s) => s.tut.flags.ack_wait },
+      ack: 'Понятно', done: (s) => s.tut.flags.ack_wait || (s.p.inv.valve || 0) > 0 || s.valves[4].replacedAt > 0 },
     { id: 'waitValve', hidden: true, done: (s) => (s.p.inv.valve || 0) > 0 || s.valves[4].replacedAt > 0,
       next: (s) => (s.valves[4].replacedAt > 0 ? 'fin' : 'r_go') },
     { id: 'r_go', text: 'Задвижку привезли! Меняем <b>Зд5</b> на Т3 — это горячая вода, отопление не трогаем. Иди на ЦТП.',

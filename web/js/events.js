@@ -10,7 +10,7 @@ G.Ev = (() => {
   const REWARD = {
     obhod: [10, 1], lube: [15, 2], replaceValve: [60, 5], fixGland: [20, 2], switchPumps: [15, 2],
     cleanFilter: [40, 3], flush: [60, 4], heat: [15, 2], overheat: [12, 1], hot: [15, 2], air: [15, 1],
-    leak: [20, 2], meter: [8, 1], job: [10, 0], pumpFix: [40, 3], restart: [10, 1], burst: [30, 3],
+    leak: [20, 2], meter: [8, 1], job: [10, 0], pumpFix: [40, 3], restart: [10, 1], burst: [10, 0],
     bearings: [35, 3], pumpSeal: [30, 3], heatOff: [5, 1], pressTest: [50, 4], pumpRev: [35, 3], readiness: [30, 4], heatStart: [30, 3],
     wellOpen: [10, 1], wellRev: [40, 3],
   };
@@ -58,6 +58,22 @@ G.Ev = (() => {
       if (!openTask('replaceValve', i)) add({ type: 'replaceValve', ref: i, title: 'Заменить задвижку ' + v.id, desc: 'Задвижка ' + v.id + ' изношена (' + Math.round(v.cond) + '%) — заменить летом, пока отопление стоит. Склад — не больше лимита в месяц.' });
     });
     msg(BOSS, (made.length ? 'План летнего ремонта до 31 августа: ' + made.join('; ') + '.' : 'Летний план: всё уже сделано — молодец!') + ' Первого сентября — комиссия по готовности к зиме!', true);
+  }
+  // готовность к крещенским морозам: график поднят заранее (или контроллер) ИЛИ оборудование в порядке
+  function frostReady(s) {
+    const H = s.heat, Sm = G.Sim, pc = Sm.pCold(s), ctl = s.upg.wctl && !s.upg.wctlOff;
+    const eq = [
+      { t: 'Грязевик и ТО чистые', ok: H.clog < 30 && H.foul < 40 },
+      { t: 'Насосы отопления в порядке', ok: s.pumps.every((p) => p.circ !== 'heat' || (!p.broken && p.bear < 60 && p.seal < 70)) },
+      { t: 'Подпитка проверена: давление в норме', ok: pc >= Sm.P_LOW && pc <= Sm.P_HIGH && !H.drain && !s.ev.netLowP },
+    ];
+    const plan = { t: 'График поднят заранее (+4° и выше) или стоит контроллер', ok: H.corr >= 4 || ctl };
+    return { list: [plan].concat(eq), ok: plan.ok || eq.every((x) => x.ok) };
+  }
+  // сезон прошёл со многими жалобами и просрочками (счёт — с пуска отопления)
+  function seasonBad(s) {
+    const M = s.flags.seasonMark || { compl: 0, failed: 0 };
+    return s.stats.complaints - M.compl >= 25 || s.stats.tasksFailed - M.failed >= 20 || s.p.trust < 55;
   }
   function commission(s) {
     const r = readinessIssues(s);
@@ -162,7 +178,7 @@ G.Ev = (() => {
     const s = G.S;
     s.msgs.unshift({ t: s.t, from, text, read: false, urgent: !!urgent });
     if (s.msgs.length > 80) s.msgs.length = 80;
-    if (G.UI) G.UI.onMessage(from, text, !!urgent);
+    if (G.UI && !(s.ev.duty && s.ev.duty.away > s.t)) G.UI.onMessage(from, text, !!urgent); // в отгуле связи нет
   }
   const alarm = (text) => msg(ODS, text, true);
 
@@ -172,6 +188,7 @@ G.Ev = (() => {
     const k = Object.assign({ id: s.nextId++, created: s.t, done: false, failed: false, goodSince: null,
       xp: rw[0], trust: rw[1], money: 0, excuse: !!(s.ev.netDrop || s.ev.netLowP || s.ev.hvs || s.ev.power) }, o);
     s.tasks.push(k);
+    if (dutyMich(s) && MICH_TYPES.includes(k.type)) k.mich = s.t + michDelay(k);
     if (G.UI) G.UI.dirty = true;
     return k;
   }
@@ -194,6 +211,151 @@ G.Ev = (() => {
     const vs = D.WELL_PIPES[c].map((n) => s.wells[i].v[n]);
     vs.forEach((v) => { if (!v.broken) Object.assign(v, { open: true, stuck: false, lastOp: s.t }); });
     return vs.some((v) => v.broken);
+  }
+
+
+  // ---------- дежурство в выходные (S.ev.duty): сам, подмена Михалыча или отгул
+  const DUTY_PAY = 1500, MICH_PRICE = 2500, OFF_GAP = 60; // доплата за сутки, цена подмены, отгул — раз в 2 месяца
+  const MICH_TYPES = ['restart', 'wellOpen', 'burst', 'leak'];
+  // выходные (и праздники) подряд, куда попадает день dd: {id — номер первого дня, days} или null
+  function weekendOf(dd) {
+    if (U.isWorkday(dd * 1440)) return null;
+    let a = dd, b = dd;
+    while (!U.isWorkday((a - 1) * 1440)) a--;
+    while (!U.isWorkday((b + 1) * 1440)) b++;
+    return { id: a, days: b - a + 1 };
+  }
+  const dutyMode = (s, id) => s.ev.duty.plan[id] || 'self';
+  // Михалыч сейчас на посту: подмена, отгул или время «без связи»
+  const dutyMich = (s) => s.ev.duty.cur === 'mich' || s.ev.duty.cur === 'off' || s.ev.duty.away > s.t;
+  // ближайшие выходные сезона: что выбрано, закреплено ли (с пятницы 17:00 — нет), можно ли отгул
+  function dutyBlocks(s, n) {
+    const out = [], E = s.ev.duty, now = U.day(s.t);
+    for (let dd = now; dd < now + 70 && out.length < n; dd++) {
+      const w = weekendOf(dd);
+      if (!w || out.some((x) => x.id === w.id) || !G.Sim.heatSeason(w.id * 1440)) continue;
+      const lock = (w.id - 1) * 1440 + 17 * 60;
+      const sat = U.date(w.id * 1440).wd === 6 && w.days >= 2;
+      const offs = Object.keys(E.plan).filter((k) => E.plan[k] === 'off' && Number(k) !== w.id);
+      const gap = w.id - E.lastOff < OFF_GAP || offs.some((k) => Math.abs(Number(k) - w.id) < OFF_GAP);
+      out.push({ id: w.id, days: w.days, lock, locked: s.t >= lock, mode: dutyMode(s, w.id), off: sat && !gap, offWhy: !sat ? 'отгул — только на субботу-воскресенье' : gap ? 'отгул — раз в 2 месяца' : '' });
+    }
+    return out;
+  }
+  // выбор на выходные; вернёт причину отказа или ''
+  function dutyPick(id, mode) {
+    const s = G.S, b = dutyBlocks(s, 8).find((x) => x.id === id);
+    if (!b) return 'Такие выходные уже не выбрать';
+    if (b.locked) return 'С пятницы 17:00 график закреплён';
+    if (mode === 'off' && !b.off) return 'Отгул сейчас не дадут: ' + b.offWhy;
+    if (mode === 'off' && s.p.trust < 40) return 'Петрович: «Какой отгул? Сначала порядок наведи!»';
+    s.ev.duty.plan[id] = mode;
+    return '';
+  }
+  function michDelay(k) { return 120 + Math.floor(U.hash(k.id, 7) * 240); } // 2–6 часов
+  // Михалыч закрывает аварийные заявки сам: без опыта, доверия и штрафов; рутину не трогает
+  function michDo(s, k, quiet) {
+    const E = s.ev.duty, B = s.ev.burst, hd = D.HOUSES[k.ref];
+    let text, log;
+    if (k.type === 'restart') {
+      const on = [];
+      ['heat', 'gvs'].forEach((c) => {
+        if (c === 'heat' ? !G.Sim.heatSeason(s.t) : s.ev.hvs) return;
+        if (!s.pumps.some((p) => p.circ === c && p.on)) { const p = s.pumps.find((x) => x.circ === c && !x.broken); if (p) { p.on = true; on.push(p.id); } }
+      });
+      text = 'Михалыч запустил насосы после отключения света' + (on.length ? ': ' + on.join(', ') : '') + '.';
+      log = 'после отключения света запустил насосы' + (on.length ? ' ' + on.join(', ') : '');
+    } else if (k.type === 'wellOpen') {
+      if (B && B.house === k.ref && B.pipe === k.circ) return false; // новый порыв — задвижки открывать нельзя
+      const broken = michalychOpen(s, k.ref, k.circ);
+      text = 'Михалыч открыл задвижки в ' + TK(k.ref) + (broken ? ', сорванную не трогал — ждём подрядчиков.' : '.');
+      log = 'открыл задвижки в ' + TK(k.ref);
+    } else if (k.type === 'burst') {
+      if (B && B.called === null) B.called = s.t;
+      text = 'Михалыч вызвал аварийную бригаду на порыв у ' + hd.name.replace('Дом', 'дома') + '. Ввод не перекрывал — ждёт бригаду.';
+      log = 'вызвал аварийку на порыв у ' + hd.name.replace('Дом', 'дома') + ' (ввод не перекрывал)';
+    } else {
+      s.houses[k.ref].leak = 0;
+      text = 'Михалыч поставил хомут на стояк в подвале ' + hd.name.replace('Дом', 'дома') + '.';
+      log = 'поставил хомут в подвале ' + hd.name.replace('Дом', 'дома');
+    }
+    k.done = true; k.michDid = true; k.doneAt = s.t;
+    E.log.push(log);
+    msg('Михалыч', text);
+    return true;
+  }
+  function michPass(s, force) {
+    for (const k of openTasks()) {
+      if (!MICH_TYPES.includes(k.type)) continue;
+      if (k.mich === undefined) k.mich = s.t + michDelay(k);
+      if (s.t >= k.mich || force) michDo(s, k);
+    }
+  }
+  function dutyStart(s, w) {
+    const E = s.ev.duty, P = s.p, mode = dutyMode(s, w.id);
+    Object.assign(E, { cur: mode, curId: w.id, days: w.days, log: [] });
+    if (mode === 'mich') {
+      if (P.money >= MICH_PRICE) { P.money -= MICH_PRICE; msg(BOSS, 'Михалыч принял смену на выходные. Договорились на ' + U.money(MICH_PRICE) + ' из твоего кармана. Аварийное — на нём, остальное — не жди.'); }
+      else { trust(-3); msg(BOSS, 'Михалыч принял смену, а платить нечем — должен остался. Начальство в курсе (доверие −3).'); }
+    }
+  }
+  function dutyEnd(s) {
+    const E = s.ev.duty;
+    if (E.cur === 'self') {
+      const pay = DUTY_PAY * E.days;
+      earn(pay, 'duty');
+      msg('Бухгалтерия УК', 'Доплата за дежурство в выходные (' + E.days + ' ' + U.plural(E.days, 'сутки', 'суток', 'суток') + '): ' + U.money(pay) + '.');
+    } else if (E.cur === 'mich' || E.cur === 'off') {
+      michPass(s, true);
+      E.sum = 'Сводка от Михалыча за выходные: ' + (E.log.length ? E.log.join('; ') + '.' : 'тихо, аварий не было.') + (E.cur === 'off' ? ' С возвращением из отгула!' : '');
+    }
+    Object.assign(E, { cur: null, curId: -1, away: 0 });
+    for (const k in E.plan) if (Number(k) < U.day(s.t) - 70) delete E.plan[k];
+  }
+  // раз в час: смена выходных, подмена, отгул, сводка
+  function dutyTick(s, t, m) {
+    const E = s.ev.duty, dd = U.day(t), w = weekendOf(dd), h = m / 60;
+    if (E.cur && !(w && w.id === E.curId)) dutyEnd(s);
+    if (w && E.curId !== w.id && G.Sim.heatSeason(w.id * 1440)) dutyStart(s, w);
+    if (E.cur === 'mich' || E.cur === 'off') michPass(s);
+    if (E.cur === 'off' && !E.away && w && dd === w.id && h === 8) dayOffStart(s);
+    if (h === 12 && U.isWorkday(t) && !U.isWorkday(t + 1440) && G.Sim.heatSeason(t + 1440) && E.plan[dd + 1] === undefined)
+      msg(BOSS, 'Завтра выходные. Кто дежурит — ты или Михалыч? Реши до 17:00: Телефон → Я → График дежурств. Не скажешь — дежуришь сам.');
+    if (E.sum && U.isWorkday(t) && h === 8) { msg(BOSS, E.sum); E.sum = null; }
+  }
+  // отгул: суббота 8:00 → воскресенье 20:00, связи нет, мир идёт, аварии решает Михалыч
+  const OFF_LEFT = 36 * 60;
+  function dayOffStart(s) {
+    const E = s.ev.duty;
+    G.MG.close(); G.UI.closePanel();
+    G.busy = null;
+    G.Main.enter('home', true);
+    msg(BOSS, 'Отгул так отгул: до воскресенья 20:00 тебя нет. Михалыч на посту, телефон выключи.');
+    E.away = s.t + OFF_LEFT; E.lastOff = U.day(s.t);
+    dayOffBusy(OFF_LEFT);
+  }
+  const dayOffBusy = (min) => G.Main.startBusy('Отгул: баня, огород, телефон в ящике…', min, { kind: 'sleep', regen: 0.15 }, () => dayOffEnd(G.S));
+  // загрузили сохранение посреди отгула
+  function dayOffResume(s) { if (s.ev.duty.away > s.t) dayOffBusy(s.ev.duty.away - s.t); }
+  function dayOffEnd(s) {
+    const E = s.ev.duty, P = s.p;
+    E.away = 0;
+    mood(25);
+    const unread = s.msgs.filter((x) => !x.read).length;
+    G.UI.toast('Отгул кончился. Пропущено сообщений: ' + unread, 'good');
+    // шанс 15%: за время отгула что-то серьёзное сгорело, и дело дошло до премии
+    if (Math.random() < 0.15) {
+      const run = s.pumps.filter((p) => p.on && !p.broken), p = U.pick(run.length ? run : s.pumps.filter((x) => !x.broken));
+      if (p) {
+        Object.assign(p, { bear: 100, broken: true, on: false });
+        const i = s.pumps.indexOf(p);
+        if (!openTask('pumpFix', i)) addTask({ type: 'pumpFix', ref: i, title: 'Отремонтировать насос ' + p.id, desc: 'За время отгула сгорел двигатель: заменить подшипники и перебрать насос.', deadline: s.t + 3 * 1440 });
+        trust(-5);
+        msg(BOSS, 'Пока ты отдыхал, на ЦТП сгорел насос ' + p.id + ' — Михалыч проглядел. Начальство про премию вспомнило первым делом (доверие −5). Отдых — дело святое, но чинить придётся тебе.', true);
+        return;
+      }
+    }
+    msg(BOSS, 'С возвращением! Пока тебя не было, на ЦТП всё обошлось — сводку пришлёт Михалыч.');
   }
 
   function xp(n) {
@@ -241,12 +403,13 @@ G.Ev = (() => {
   function complete(k, s) {
     k.done = true;
     k.doneAt = s.t;
+    if (k.michDid) return; // закрыл Михалыч: без опыта, доверия и денег
     if (hasPerk('ear') && REPAIRS.includes(k.type)) k.xp = Math.round(k.xp * 1.5);
     xp(k.xp);
     if (k.trust) trust(k.trust);
     let money = k.money || 0;
     const h = U.hour(s.t);
-    if ((h < 6 || h >= 22) && EMERGENCY.includes(k.type)) money += 700;
+    if ((h < 6 || h >= 22) && EMERGENCY.includes(k.type) && k.type !== 'burst') money += 700; // порыв — ночные за изоляцию, см. Act.checkIsolated
     if (money) earn(money, k.type);
     mood(2);
     s.stats.tasksDone++;
@@ -282,7 +445,7 @@ G.Ev = (() => {
       if (!isOpen(k)) continue;
       const f = CHECK[k.type];
       if (f && f(k, s)) complete(k, s);
-      else if (k.deadline && s.t > k.deadline) fail(k, s);
+      else if (k.deadline && s.t > k.deadline && k.mich === undefined) fail(k, s);
     }
   }
 
@@ -333,7 +496,7 @@ G.Ev = (() => {
     if (cold > 0.3 && !warming && ready('heat') && Math.random() < cold * 0.0015 * f) complain(i, 'heat');
     else if (hot > 0.3 && ready('overheat') && Math.random() < hot * 0.0012 * f) complain(i, 'overheat');
     else if (noHot > 0.3 && ready('hot') && Math.random() < noHot * 0.0015 * f) complain(i, 'hot');
-    else if (hs.air && ready('air') && Math.random() < 0.0015 * f) complain(i, 'air');
+    else if (chill && hs.air && ready('air') && Math.random() < 0.0015 * f) complain(i, 'air');
   }
 
   function pumpBroke(p) {
@@ -389,6 +552,9 @@ G.Ev = (() => {
     s.tasks = s.tasks.filter((k) => !wo.includes(k) && !(B && taskIs(k, 'burst')));
     for (const k of s.tasks) if (k.deadline && !k.plan) k.deadline += mins;
     s.ev.inspect = null;
+    // выходные, в которые вернулись из отпуска или больницы, — без доплаты и без подмены
+    const E = s.ev.duty, wk = weekendOf(U.day(s.t));
+    Object.assign(E, { cur: wk ? 'skip' : null, curId: wk ? wk.id : -1, away: 0, sum: null, log: [] });
     // мороз (хоть часть) прошёл без героя — премию за него не дают
     if (s.wx.snap) s.wx.snap.compl = true;
     if (s.wx.frost && s.wx.frost.from <= s.t) s.wx.frost.compl = true;
@@ -411,7 +577,7 @@ G.Ev = (() => {
   // точка отсчёта табеля: счётчики на прошлую зарплату
   const tabelMark = (s) => ({ done: s.stats.tasksDone, failed: s.stats.tasksFailed, compl: s.stats.complaints, trust: s.p.trust, failBy: Object.assign({}, s.stats.failBy || {}) });
   // табель 5-го: что сделал за месяц, премия и почему
-  function tabel(s, prem, at) {
+  function tabel(s, prem, at, au) {
     const T = s.flags.tabel || tabelMark(s), st = s.stats, P = s.p;
     const done = st.tasksDone - T.done, failed = st.tasksFailed - T.failed, compl = st.complaints - T.compl;
     let worst = '', wn = 0;
@@ -424,19 +590,38 @@ G.Ev = (() => {
     const prev = U.date(at - 6 * 1440).m;
     msg(BOSS, 'Табель за ' + MON_N[prev] + ': заявок выполнено ' + done + ', просрочено ' + failed +
       (wn ? ' (больше всего — ' + (FAIL_NAME[worst] || worst) + ', ' + wn + ')' : '') + ', жалоб жильцов ' + compl +
-      '. Доверие ' + tr + ' (' + (dt >= 0 ? '+' : '−') + Math.abs(dt) + ' за месяц). ' + why);
+      '. Доверие ' + tr + ' (' + (dt >= 0 ? '+' : '−') + Math.abs(dt) + ' за месяц). ' + why + (au ? ' ' + au.text : ''));
     s.flags.tabel = tabelMark(s);
+  }
+  // сверка Гкал за месяц: потреблено против норматива от средней уличной температуры (на 21,5° в квартирах, расчётные потери домов и магистрали)
+  const NORM_TIN = 21.5;
+  function heatAudit(s, peek) {
+    const g = s.heat.gk;
+    if (!peek) s.heat.gk = { kwh: 0, tout: 0, tin: 0, n: 0 };
+    if (g.n < (peek ? 1440 : 7 * 1440)) return null; // сезон в этом месяце почти не шёл
+    const tout = g.tout / g.n, tin = g.tin / g.n;
+    // норматив, кВт: теплопотери домов на 21,5° в квартирах за вычетом бытовых + остывание магистрали (5 участков, 0,3 кВт/К) при графике
+    const mean = G.Sim.tSched(tout) - 6, loss = tout >= 20 ? 0 : 5 * 0.3 * Math.max(0, mean - 5);
+    const norm = (D.HOUSES.reduce((a, h) => a + Math.max(0, h.kw / 46 * (NORM_TIN - tout) - 0.07 * h.kw), 0) + loss) * g.n / 60;
+    const pct = Math.round((g.kwh / norm - 1) * 100), gc = (kwh) => (kwh / G.Sim.GCAL).toFixed(0);
+    const over = pct > 10, save = pct < -5 && tin >= 20;
+    let text = 'Теплосеть: за месяц взято ' + gc(g.kwh) + ' Гкал при нормативе ' + gc(norm) + ' (' + (pct >= 0 ? '+' : '−') + Math.abs(pct) + '%).';
+    if (over) text += ' Перерасход — премия −3%.';
+    else if (save) text += ' Экономия при тепле в квартирах (' + U.deg1(tin) + ') — плюс 2 000 ₽.';
+    else if (pct < -5) text += ' Сэкономил, но в квартирах прохладно (' + U.deg1(tin) + ') — не в счёт.';
+    return { pct, over, save, text };
   }
   // at — момент выплаты (в отпуске и на больничном он раньше s.t)
   function payday(dd, at) {
     const s = G.S, P = s.p;
     if (at === undefined) at = s.t;
     const sal = D.RANKS[rankIdx()].salary;
-    let sum, text, prem = 0;
+    let sum, text, prem = 0, au = null;
     if (dd === 20) { sum = Math.round(sal * 0.4); text = 'Аванс: ' + U.money(sum) + '.'; }
     else if (U.day(at) < 10) return;
     else {
-      prem = premOf(P.trust);
+      au = heatAudit(s);
+      prem = Math.max(0, premOf(P.trust) - (au && au.over ? 0.03 : 0));
       const ps = Math.round(sal * prem);
       sum = Math.round(sal * 0.6) + ps;
       text = 'Зарплата: ' + U.money(sum) + (ps ? ' (в т.ч. премия ' + U.money(ps) + ')' : ' (премии нет — доверие начальства низкое)') + '.';
@@ -444,12 +629,13 @@ G.Ev = (() => {
     earn(sum);
     mood(10);
     msg('Бухгалтерия УК', text, true);
+    if (au && au.save) earn(2000, 'gcal');
     if (dd !== 5) return;
     // квартплата — сразу с зарплаты
     P.money -= RENT;
     msg('Квартплата и коммуналка', 'Списано ' + U.money(RENT) + ': квартира, свет, вода, домофон и капремонт. На карте осталось ' + U.money(P.money) + '.');
     if (P.money < 0) { mood(-10); msg('Мысли', 'Карта в минусе… Звонили из банка, вежливо так. Пора меньше тратить или брать шабашки.'); }
-    tabel(s, prem, at);
+    tabel(s, prem, at, au);
   }
 
   function inspectionResult() {
@@ -485,6 +671,9 @@ G.Ev = (() => {
         const v = s.valves[x.i];
         if ((v.gland || v.flange) && !openTask('fixGland', x.i) && !openTask('replaceValve', x.i))
           o = { type: 'fixGland', ref: x.i, title: 'Устранить течь ' + v.id, desc: 'По журналу: течь на задвижке ' + v.id + '. Подтяни/перенабей сальник или смени прокладки.', deadline: s.t + 4 * 1440 };
+      } else if (x.k === 'leak') {
+        const nm = D.HOUSES[x.i].name;
+        if (s.houses[x.i].leak && !openTask('leak', x.i)) o = { type: 'leak', ref: x.i, title: 'Течь в подвале: ' + nm, desc: 'По журналу: в подвале ' + nm.replace('Дом', 'дома') + ' течёт стояк. Наложить ремонтный хомут (склад: «Хомут ремонтный»).', deadline: s.t + 3 * 1440 };
       } else if (x.k === 'old') {
         if (!openTask('replaceValve', x.i)) o = { type: 'replaceValve', ref: x.i, title: 'Заменить задвижку ' + s.valves[x.i].id, desc: 'Задвижка ' + s.valves[x.i].id + ' дышит на ладан. Заказать на складе и заменить.', deadline: s.t + 10 * 1440 };
       } else if (x.k === 'lube') {
@@ -562,7 +751,7 @@ G.Ev = (() => {
       }
       if (B.arrived && t >= B.fixAt) {
         E.burst = null;
-        msg('Аварийная бригада', 'Порыв заварили, яму засыпали. Задвижки в камере ' + tk + ' оставили закрытыми — спустись и открой ' + pipesOf(B.pipe) + (B.pipe === 'heat' ? ', потом проверь давление в отоплении.' : '.'), true);
+        msg('Аварийная бригада', 'Порыв заварили, яму засыпали. Задвижки в камере ' + tk + ' оставили закрытыми — спустись и открой ' + pipesOf(B.pipe) + (B.pipe === 'heat' ? ', потом подпитай контур до ~4 бар на холодную — вода из него ушла.' : '.'), true);
         if (!openTask('wellOpen', B.house, B.pipe)) addTask({ type: 'wellOpen', ref: B.house, circ: B.pipe, title: 'Открыть задвижки в ' + tk, desc: 'Порыв устранён. Спуститься в камеру ' + tk + ' (люк на тротуаре перед ' + before(B.house) + ') и открыть ' + pipesOf(B.pipe) + ' — дом сидит без ' + (B.pipe === 'heat' ? 'отопления' : 'горячей воды') + '.', deadline: t + 180, excuse: false });
       }
     }
@@ -574,15 +763,28 @@ G.Ev = (() => {
       msg(BOSS, 'Подрядчики заменили задвижку в камере ' + TK(i) + '. Положение оставили как было — проверь.');
     });
     if (E.inspect && t >= E.inspect.at) inspectionResult();
+    if (s.wx.snap && s.wx.snap.frost && m % 60 === 0) {
+      const tins = s.houses.filter((x, i) => G.Sim.wellOpen(s, i, 'heat')).map((x) => x.tin);
+      if (tins.length) s.wx.snap.minTin = Math.min(s.wx.snap.minTin, ...tins);
+    }
     if (s.wx.snap && t >= s.wx.snap.until) {
-      // крещенский мороз пережили без единой жалобы «Холодно» — заранее подготовился
-      if (s.wx.snap.frost && !s.wx.snap.compl && season) {
-        trust(3); earn(3000); mood(5);
-        msg(BOSS, 'Пережили мороз без жалоб! Ни одного звонка «холодно» — вот это я понимаю, слесарь. Выписал премию 3 000 ₽.', true);
+      const F = s.wx.snap;
+      // крещенский мороз: премия — за подготовку заранее (график, чистое оборудование) и дома без жалоб и промерзания
+      if (F.frost && season) {
+        if (F.compl) { /* жалобы были или мороз прошёл без героя — по ним уже влетело */ }
+        else if (F.prep && F.minTin >= 18) {
+          trust(3); earn(3000); mood(5);
+          msg(BOSS, 'Пережили мороз без жалоб! Подготовился заранее, дома не промёрзли — вот это я понимаю, слесарь. Выписал премию 3 000 ₽.', true);
+        } else msg(BOSS, F.prep ? 'Мороз пережили, звонков не было, но в домах опускалось до ' + U.deg(F.minTin) + ' — на премию не тянет.'
+          : 'Мороз прошёл без звонков, но график заранее не поднимали и оборудование не готовили — это везение, а не работа. Премии не будет.');
       }
       s.wx.snap = null;
     }
-    if (s.wx.frost && t >= s.wx.frost.from) { const F = s.wx.frost; s.wx.snap = { delta: F.delta, until: F.until, frost: true, compl: !!F.compl }; s.wx.frost = null; }
+    if (s.wx.frost && t >= s.wx.frost.from) {
+      const F = s.wx.frost;
+      s.wx.snap = { delta: F.delta, until: F.until, frost: true, compl: !!F.compl, prep: frostReady(s).ok, minTin: 99 };
+      s.wx.frost = null;
+    }
 
     // ---- плановые
     if (m === 8 * 60 + 15 && wd && s.flags.late !== day && s.scene === 'home') {
@@ -619,6 +821,8 @@ G.Ev = (() => {
         msg(BOSS, 'Приказ: начинаем отопительный сезон! Запускай отопление ' + (m < 12 * 60 ? 'до вечера' : 'как можно скорее') + ': задвижки, давление ~4 бар, насос. Чек-лист — в шкафу.', true);
         s.flags.seasonEnd = false;
         s.flags.coldGrace = t + 48 * 60; // квартиры за лето остыли — жильцы знают, что отопление пускают, двое суток терпят
+        s.flags.seasonMark = { compl: s.stats.complaints, failed: s.stats.tasksFailed };
+        s.houses.forEach((x) => { x.air = 0; }); // воздух за лето — не в счёт, новый воздух пускаем ниже
         if (!openTask('heatStart')) addTask({ type: 'heatStart', title: 'Пуск отопления', desc: 'Запустить отопление квартала: открыть задвижки Т1/Т2, подпитать до ~4 бар, запустить Н1 или Н2.', deadline: t + 9 * 60 });
         U.pick([[0, 2, 4], [1, 3], [0, 3, 4], [2, 4]]).forEach((i) => { s.houses[i].air = 1; });
       }
@@ -640,6 +844,7 @@ G.Ev = (() => {
     }
     if (m === 10 * 60 && (d.d === 5 || d.d === 20)) payday(d.d);
     if (m >= 10 * 60 && d.m === 8 && d.d <= 5 && d.y > 2026 && s.flags.commYear !== d.y) { s.flags.commYear = d.y; commission(s); }
+    if (m % 60 === 0) dutyTick(s, t, m);
     if (m % 60 === 0 && hasPerk('mentor')) apprentice(s);
     if (m % 180 === 0 && season && s.upg.wctl && !s.upg.wctlOff) weatherCtl(s);
     if (m === 0) {
@@ -658,7 +863,7 @@ G.Ev = (() => {
       s.flags.summerFrom = t;
       s.flags.coldGrace = tOf(s, 9, 3, 9); // осенью до пуска отопления на холод не жалуются
       earn(15000); // премия — тоже в «Заработано»
-      msg(BOSS, 'Отопительный сезон закрыт! Держи премию 15 000 ₽. Останови насосы отопления — летом ремонтная кампания, план пришлю.', true);
+      msg(BOSS, 'Отопительный сезон закрыт! ' + (seasonBad(s) ? 'Премия 15 000 ₽ — жалоб и просрочек было многовато, на будущий сезон подтянись. ' : 'Держи премию 15 000 ₽. ') + 'Останови насосы отопления — летом ремонтная кампания, план пришлю.', true);
       if (!openTask('heatOff')) addTask({ type: 'heatOff', title: 'Остановить отопление', desc: 'Сезон закрыт: остановить насосы отопления Н1/Н2.', deadline: t + 2 * 1440 });
       G.UI && G.UI.victory();
     }
@@ -722,8 +927,11 @@ G.Ev = (() => {
       if (free.length) {
         const hs = U.pick(free), i = s.houses.indexOf(hs);
         hs.leak = 1;
-        msg('Старшая по дому, ' + D.HOUSES[i].name, 'В подвале течёт стояк, воды уже по щиколотку!', true);
-        addTask({ type: 'leak', ref: i, title: 'Течь в подвале: ' + D.HOUSES[i].name, desc: 'Наложить ремонтный хомут на стояк в подвале.', deadline: t + 480 });
+        // каждая четвёртая течь — тихая: жильцы не заметили, видна по расходу подпитки и на обходе
+        if (Math.random() >= 0.25) {
+          msg('Старшая по дому, ' + D.HOUSES[i].name, 'В подвале течёт стояк, воды уже по щиколотку!', true);
+          addTask({ type: 'leak', ref: i, title: 'Течь в подвале: ' + D.HOUSES[i].name, desc: 'Наложить ремонтный хомут на стояк в подвале.', deadline: t + 480 });
+        }
       }
     }
     if (season && per(0.08)) { const hs = U.pick(s.houses); hs.air = 1; }
@@ -741,5 +949,5 @@ G.Ev = (() => {
   }
 
   return { readinessIssues, sinceSummer, pressSigned, earn, msg, alarm, addTask, openTask, openTasks, houseTasks, xp, trust, mood, rankIdx, complaints, pumpBroke, blowout, passOut,
-    hospital, skipTime, startGame, tabelMark, hasPerk, perkPending, pickPerk, tick, BOSS, ODS };
+    hospital, skipTime, startGame, tabelMark, dutyBlocks, dutyPick, dayOffResume, frostReady, seasonBad, heatAudit, hasPerk, perkPending, pickPerk, tick, BOSS, ODS };
 })();

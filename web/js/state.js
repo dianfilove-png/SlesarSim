@@ -6,8 +6,13 @@ G.St = (() => {
 
   // тепловая камера: 4 задвижки на ответвлении к дому (Т1–Т4), годами не тронутые — могут закиснуть
   function newWell(t0) {
-    return { revAt: -1, fixAt: null, v: [0, 1, 2, 3].map(() => ({ open: true, stuck: false, broken: false, lastOp: (t0 || 0) - Math.round(120 + Math.random() * 300) * 1440 })) };
+    return { revAt: -1, fixAt: null, v: [0, 1, 2, 3].map(() => ({ open: true, stuck: false, broken: false, lastOp: (t0 || 0) - Math.round(120 + Math.random() * 300) * 1440 })), water: 0 };
   }
+  // график дежурств в выходные: plan — по номеру первого дня выходных 'self' | 'mich' | 'off', cur — режим идущих выходных,
+  // away — до какого момента нет связи (отгул), lastOff — день последнего отгула, log — что сделал Михалыч
+  const newDuty = () => ({ plan: {}, cur: null, curId: -1, away: 0, lastOff: -9999, log: [] });
+  // подпитка за сутки (по часам) и энергия месяца для сверки Гкал
+  const newGk = () => ({ kwh: 0, tout: 0, tin: 0, n: 0 });
   // модернизация ЦТП: что установлено (частотники — по насосам, шаровые краны — по камерам)
   const newUpg = () => ({ vfd: [false, false, false, false], wctl: false, modem: false, magnet: false, ballv: [false, false, false, false, false], sms: false });
   // старые сохранения: до камер дом отсекала аварийка флагом cutoff
@@ -44,6 +49,11 @@ G.St = (() => {
     }
     if (S.ev.netLowP === undefined) S.ev.netLowP = null;
     if (S.thvs === undefined) S.thvs = 8;
+    // тихая осень: вода в камерах, подпитка за сутки, сверка Гкал, ночной режим; график дежурств
+    S.wells.forEach((w) => { if (w.water === undefined) w.water = 0; });
+    if (S.heat.fedH === undefined) Object.assign(S.heat, { fedH: new Array(24).fill(0), gk: newGk(), night: false, armed: S.heat.ps >= 2.5 && !S.heat.drain });
+    if (!S.ev.duty) S.ev.duty = newDuty();
+    if (S.wx.snap && S.wx.snap.frost && S.wx.snap.minTin === undefined) Object.assign(S.wx.snap, { prep: true, minTin: 99 }); // мороз уже идёт — подготовку не спрашиваем
     return S;
   }
 
@@ -59,7 +69,7 @@ G.St = (() => {
       px: 1070,
       wx: { dev: 0, snap: null, frost: null, snow: false },
       tout: 8, tnet: 75, thvs: 10,
-      ev: { netDrop: null, netLowP: null, power: null, hvs: null, burst: null, inspect: null },
+      ev: { netDrop: null, netLowP: null, power: null, hvs: null, burst: null, inspect: null, duty: newDuty() },
       p: {
         energy: 85, hunger: 70, health: 90, mood: 60, money: 6500, xp: 0, trust: 60,
         inv: { sandwich: 2, doshirak: 2, coffee: 3, grease: 2, gasket: 2, wd40: 2 },
@@ -67,7 +77,7 @@ G.St = (() => {
       },
       // расходы — м³/ч, мощность — кВт; gn — сетевая вода через ТО/ВВП; qf — подпитка, qppk — сброс ППК
       heat: { ps: 4.1, drain: false, feed: false, auto: false, autoOn: false, q: 95, t1: 52, t2: 40, p1: 6, p2: 4.5, corr: 0, gn: 20, kw: 1000, qf: 0, qppk: 0, trh: 45,
-        ppkOn: false, ppkStuck: false, foul: 22, clog: 38, lowAlarm: false, smsSent: false, flushedAt: -1, cleanedAt: -1, blowCd: 0 },
+        ppkOn: false, ppkStuck: false, armed: true, night: false, fedH: new Array(24).fill(0), gk: newGk(), foul: 22, clog: 38, lowAlarm: false, smsSent: false, flushedAt: -1, cleanedAt: -1, blowCd: 0 },
       gvs: { ps: 4.6, drain: false, q: 4.4, t3: 60, t4: 54, p3: 5, p4: 4.6, set: 62, foul: 40, gn: 2, kw: 300, draw: 6, lowAlarm: false, flushedAt: -1 },
       pumps: [
         { id: 'Н1', circ: 'heat', on: true, broken: false, bear: 34, seal: 22, lube: 45, hours: 8400 },

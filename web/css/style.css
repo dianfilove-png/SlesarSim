@@ -110,7 +110,7 @@ button { font: inherit; color: inherit; touch-action: manipulation; }
 .b-wake { width: auto; display: inline-block; margin: 6px auto 0; text-align: center; min-height: 32px; padding: 4px 14px; }
 
 /* ---------- мини-игры */
-#mg { position: fixed; inset: 0; background: #0a0e14ee; z-index: 40; display: flex; align-items: center; justify-content: center;
+#mg { position: fixed; inset: 40px 0 0 0; background: #0a0e14ee; z-index: 40; display: flex; align-items: center; justify-content: center;
   padding: 10px max(10px, env(safe-area-inset-right)) 10px max(10px, env(safe-area-inset-left)); }
 .mg-box { display: flex; gap: 18px; width: min(900px, 100%); height: min(100%, 420px); align-items: center; }
 .mg-left { flex: 0 0 auto; height: 100%; aspect-ratio: 1; max-width: 48%; display: flex; align-items: center; justify-content: center; }

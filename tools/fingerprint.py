@@ -65,6 +65,7 @@ window.bot = () => {
     if (H.foul >= 60) f.push({ k: 'foul', c: 'heat' });
     if (s.gvs.foul >= 62) f.push({ k: 'foul', c: 'gvs' });
     if (s.flood > 20) f.push({ k: 'flood' });
+    if (!f.some((x) => x.k === 'leak')) s.houses.forEach((x, i) => { if (x.leak) f.push({ k: 'leak', i }); });
     Object.assign(s.journal, { findings: f, lastObhod: day, lastObhodT: s.t });
     s.journal.entries.unshift({ t: s.t, text: f.map((x) => x.k + (x.i === undefined ? '' : x.i) + (x.c || '')).join(',') || '-' });
     if (s.journal.entries.length > 20) s.journal.entries.length = 20;
@@ -122,6 +123,7 @@ window.bot = () => {
   const turn = (i, n, want) => {
     const v = s.wells[i].v[n];
     if (v.open === want || v.broken) return false;
+    if (s.wells[i].water >= G.Sim.FLOODED && !(B && B.house === i)) return act('wellPump', () => A.wellPump(i)); // осенью сначала откачать воду
     if (v.stuck) return A.has('wd40') && act('wellUnstick', () => A.wellUnstick(i, n, 'wd'));
     if (want && A.wellLock(i, n)) return false;
     return act('wellToggle', () => A.wellToggle(i, n));
@@ -140,6 +142,7 @@ window.bot = () => {
     for (let i = 0; i < s.wells.length; i++) {
       const w = s.wells[i];
       if (w.revAt > from || (B && B.house === i)) continue;
+      if (G.Sim.wellFlooded(s, i)) return act('wellPump', () => A.wellPump(i));
       const n = w.v.findIndex((v) => v.stuck && !v.broken);
       if (n >= 0) { if (A.has('wd40')) return act('wellUnstick', () => A.wellUnstick(i, n, 'wd')); continue; }
       for (let m = 0; m < 4; m++) if (turn(i, m, true)) return;
